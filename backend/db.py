@@ -54,6 +54,17 @@ def _ensure_columns() -> None:
             "reasoning": "TEXT",
             "sources": "TEXT",
         },
+        "memories": {
+            "scope": "VARCHAR(16) DEFAULT 'subject'",
+            "evidence": "TEXT",
+            "source": "VARCHAR(16) DEFAULT 'chat'",
+            "source_message_id": "INTEGER",
+            "confidence": "FLOAT DEFAULT 0.6",
+            "accuracy": "VARCHAR(16) DEFAULT 'unverified'",
+            "pinned": "BOOLEAN DEFAULT 0",
+            "updated_at": "DATETIME",
+            "verified_at": "DATETIME",
+        },
     }
     with engine.connect() as conn:
         for table, cols in wanted.items():
@@ -67,6 +78,15 @@ def _ensure_columns() -> None:
             for name, ddl in cols.items():
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+        # 数据迁移：老版本用 subject_key 为空表示"全局"，现在有了 scope 字段
+        try:
+            conn.execute(text(
+                "UPDATE memories SET scope = 'global' "
+                "WHERE subject_key IS NULL AND (scope IS NULL OR scope = 'subject')"
+            ))
+        except Exception:
+            pass
         conn.commit()
 
 

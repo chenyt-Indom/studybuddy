@@ -12,7 +12,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import auth, chat, cross, grade, insight, mistake, profile, review, system
+from .api import (
+    auth,
+    chat,
+    cross,
+    grade,
+    insight,
+    memory,
+    mistake,
+    profile,
+    review,
+    system,
+)
 from .config import BASE_DIR, settings
 from .db import init_db
 
@@ -51,6 +62,7 @@ for r in (
     mistake.router,
     insight.router,
     cross.router,
+    memory.router,
     system.router,
 ):
     app.include_router(r)

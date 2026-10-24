@@ -24,6 +24,7 @@ const NAV = [
   ['review', '复习中心', '🔁'],
   ['mistakes', '错题本', '📕'],
   ['insight', '洞察', '💡'],
+  ['memory', '记忆库', '🧠'],
   ['profile', '学习档案', '👤'],
   ['settings', '设置', '⚙️']
 ];
@@ -179,7 +180,8 @@ function route() {
   const m = $('#main');
   m.innerHTML = '';
   ({ chat: viewChat, dashboard: viewDashboard, review: viewReview, mistakes: viewMistakes,
-     insight: viewInsight, profile: viewProfile, settings: viewSettings }[state.view] || viewChat)(m);
+     insight: viewInsight, memory: viewMemory, profile: viewProfile,
+     settings: viewSettings }[state.view] || viewChat)(m);
 }
 
 /* ---------------- 视图：对话 ---------------- */
@@ -508,9 +510,12 @@ function renderCtx(meta) {
       ${h(c.relation_cn)}</span></div>`);
   }
 
+  const memList = meta.memories || [];
   html += sec('召回的长期记忆',
     meta.memories_used > 0
-      ? `<div class="item">命中 <b>${meta.memories_used}</b> 条历史观察，已注入 Prompt</div>`
+      ? `<div class="item">全局 <b>${meta.memories_global || 0}</b> 条 · 本科目 <b>${meta.memories_subject || 0}</b> 条</div>`
+        + memList.map(m => `<div class="item">· <span class="pill" style="font-size:10.5px">${
+            m.scope === 'global' ? '全局' : '科目'}</span> ${h(m.content)}</div>`).join('')
       : '<div class="item" style="color:#8d97a8">本次没有命中相关记忆</div>');
 
   html += sec('激活的模式洞察',
@@ -917,15 +922,319 @@ async function viewProfile(root) {
           <b>${(w.mastery * 100).toFixed(0)}%</b></div>`).join('')
       : '<div class="empty">还没有掌握度数据</div>';
 
-    const mem = await api.get('/api/system/memories');
-    $('#mem').innerHTML = mem.length ? `<table class="tbl">
-      <thead><tr><th>类型</th><th>内容</th><th>权重</th><th>命中</th></tr></thead>
-      <tbody>${mem.slice(0, 20).map(m => `<tr>
-        <td><span class="pill">${h(m.type)}</span></td>
-        <td>${h(m.content)}</td><td>${m.weight}</td><td>${m.hits}</td></tr>`).join('')}
-      </tbody></table>` : '<div class="empty">还没有长期记忆。多聊几轮后系统会自动提取。</div>';
+    // 记忆概览：详细管理移到「记忆库」页
+    const ms = await api.get('/api/memory/stats');
+    const rate = ms.accuracy_rate === null ? '尚未判定'
+      : `${(ms.accuracy_rate * 100).toFixed(0)}%（对 ${ms.correct} / 错 ${ms.wrong}）`;
+    $('#mem').innerHTML = `<div class="grid g3" style="margin-bottom:14px">
+        <div><div class="hint">记忆总数</div>
+          <div class="stat" style="font-size:20px">${ms.total}</div></div>
+        <div><div class="hint">全局 / 科目</div>
+          <div class="stat" style="font-size:20px">${ms.global}<small> / ${ms.subject}</small></div></div>
+        <div><div class="hint">你的判定准确率</div>
+          <div class="stat" style="font-size:20px">${rate}</div></div>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="goMemory">去记忆库查看 / 核查每一条</button>
+        <span class="hint">能看到依据原话，也能判「准确 / 不准确」</span>
+      </div>`;
+    const gm = $('#goMemory');
+    if (gm) gm.onclick = () => {
+      state.view = 'memory';
+      $$('.side nav a').forEach(x => x.classList.toggle('on', x.dataset.v === 'memory'));
+      route();
+    };
 
   } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 视图：记忆库 ---------------- */
+const MEM_STATE = { scope: 'all', subject: '', accuracy: '', q: '' };
+
+async function viewMemory(root) {
+  root.innerHTML = `
+  <div class="page-h">
+    <div><h2>记忆库</h2>
+      <div class="desc">全局记忆跨学科通用，科目记忆只在该科生效 · 每条都能核查依据、判定准不准</div></div>
+    <div class="row" style="gap:8px">
+      <button class="btn" id="mPreview">预览会注入什么</button>
+      <button class="btn" id="mAdd">+ 手动添加</button>
+    </div>
+  </div>
+
+  <div class="grid g4" id="mStats"></div>
+  <div style="height:14px"></div>
+
+  <div class="card">
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:14px">
+      <div class="row" style="gap:4px" id="mScopeTabs">
+        <button class="btn sm" data-s="all">全部</button>
+        <button class="btn sm" data-s="global">全局（跨学科）</button>
+        <button class="btn sm" data-s="subject">分科目</button>
+      </div>
+      <select id="mSubject" style="width:auto">
+        <option value="">所有科目</option>
+        ${SUBJECTS.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}
+      </select>
+      <select id="mAccuracy" style="width:auto">
+        <option value="">所有判定</option>
+        <option value="unverified">未判定</option>
+        <option value="correct">我判定：准确</option>
+        <option value="wrong">我判定：不准确</option>
+      </select>
+      <input id="mQ" type="text" placeholder="搜索内容…" style="width:180px" />
+      <div class="spacer"></div>
+      <button class="btn sm ghost" id="mClean" style="color:#b91c1c">清理所有「不准确」</button>
+    </div>
+    <div id="mList"></div>
+  </div>
+
+  <div id="mDialog"></div>`;
+
+  // ---------- 统计 ----------
+  const renderStats = (s) => {
+    let rate, note;
+    if (s.accuracy_rate === null) {
+      rate = '<span class="hint" style="font-size:15px">尚未判定</span>';
+      note = '点下面的「准确 / 不准确」开始核查';
+    } else if (s.judged < 3) {
+      rate = `<span>${(s.accuracy_rate * 100).toFixed(0)}%</span>`;
+      note = `样本只有 ${s.judged} 条，参考价值有限`;
+    } else {
+      const c = s.accuracy_rate >= 0.8 ? '#16a34a' : s.accuracy_rate >= 0.6 ? '#f59e0b' : '#dc2626';
+      rate = `<span style="color:${c}">${(s.accuracy_rate * 100).toFixed(0)}%</span>`;
+      note = `对 ${s.correct} / 错 ${s.wrong}`;
+    }
+    $('#mStats').innerHTML = `
+      <div class="card"><div class="hint">记忆总数</div>
+        <div class="stat" style="margin:6px 0 2px">${s.total}<small>全局 ${s.global} · 科目 ${s.subject}</small></div></div>
+      <div class="card"><div class="hint">你判定过</div>
+        <div class="stat" style="margin:6px 0 2px">${s.judged}<small>未判定 ${s.unverified}</small></div></div>
+      <div class="card"><div class="hint">准确率</div>
+        <div class="stat" style="margin:6px 0 2px">${rate}<small>${note}</small></div></div>
+      <div class="card"><div class="hint">这条规则的效力</div>
+        <div class="hint" style="margin-top:8px;line-height:1.7">
+          判「不准确」→ <b>立即停止使用</b>，不再进 Prompt</div></div>`;
+  };
+
+  // ---------- 列表 ----------
+  const load = async () => {
+    const p = new URLSearchParams();
+    if (MEM_STATE.scope !== 'all') p.set('scope', MEM_STATE.scope);
+    if (MEM_STATE.subject) p.set('subject', MEM_STATE.subject);
+    if (MEM_STATE.accuracy) p.set('accuracy', MEM_STATE.accuracy);
+    if (MEM_STATE.q) p.set('q', MEM_STATE.q);
+    try {
+      const [st, r] = await Promise.all([
+        api.get('/api/memory/stats'),
+        api.get('/api/memory?' + p.toString())
+      ]);
+      if (!$('#mList')) return;
+      renderStats(st);
+      renderList(r.items || []);
+    } catch (e) { toast(e.message, true); }
+  };
+
+  const renderList = (items) => {
+    if (!items.length) {
+      $('#mList').innerHTML = `<div class="empty">这里还没有记忆<br>
+        去「学科对话」聊几轮，系统会自动提取；或者点右上角「+ 手动添加」</div>`;
+      return;
+    }
+    $('#mList').innerHTML = items.map(m => `
+      <div class="mem ${h(m.accuracy)}" data-id="${m.id}" data-pinned="${m.pinned ? 1 : 0}">
+        <div class="mem-head">
+          <span class="pill ${m.scope === 'global' ? 'brand' : ''}">${m.scope === 'global' ? '全局' : h(m.subject_cn || '科目')}</span>
+          <span class="pill">${h(m.type_cn)}</span>
+          ${m.pinned ? '<span class="pill warn">置顶</span>' : ''}
+          ${m.accuracy === 'correct' ? '<span class="pill ok">你判定：准确</span>' : ''}
+          ${m.accuracy === 'wrong' ? '<span class="pill bad">你判定：不准确</span>' : ''}
+          <span class="mem-meta">置信度 ${(m.confidence * 100).toFixed(0)}% · 权重 ${m.weight} · 命中 ${m.hits} 次</span>
+          <div class="spacer"></div>
+          <button class="btn sm" data-act="ok">准确</button>
+          <button class="btn sm" data-act="no">不准确</button>
+          <button class="btn sm ghost" data-act="pin">${m.pinned ? '取消置顶' : '置顶'}</button>
+          <button class="btn sm ghost" data-act="edit">编辑</button>
+          <button class="btn sm ghost" data-act="del" style="color:#b91c1c">删</button>
+        </div>
+        <div class="mem-body">${h(m.content)}</div>
+        ${m.evidence ? `<div class="mem-ev">依据原话：「${h(m.evidence)}」</div>`
+          : '<div class="mem-ev" style="color:#b45309">⚠️ 这条没有依据片段，建议你核实一下</div>'}
+      </div>`).join('');
+
+    $$('#mList .mem').forEach(el => {
+      const id = el.dataset.id;
+      const act = (a) => el.querySelector(`[data-act="${a}"]`);
+      act('ok').onclick = () => verify(id, 'correct');
+      act('no').onclick = () => verify(id, 'wrong');
+      act('pin').onclick = () => patch(id, { pinned: el.dataset.pinned !== '1' });
+      act('edit').onclick = () => openEdit(id);
+      act('del').onclick = () => del(id);
+    });
+  };
+
+  const verify = async (id, accuracy) => {
+    try {
+      await api.post(`/api/memory/${id}/verify`, { accuracy });
+      toast(accuracy === 'correct' ? '已标为准确（以后会优先使用）' : '已标为不准确（以后不再使用）');
+      load();
+    } catch (e) { toast(e.message, true); }
+  };
+
+  const patch = async (id, body) => {
+    try { await api.put(`/api/memory/${id}`, body); load(); }
+    catch (e) { toast(e.message, true); }
+  };
+
+  const del = async (id) => {
+    if (!confirm('确定删除这条记忆？')) return;
+    try { await api.del(`/api/memory/${id}`); toast('已删除'); load(); }
+    catch (e) { toast(e.message, true); }
+  };
+
+  const openEdit = async (id) => {
+    const r = await api.get('/api/memory?scope=all');
+    const m = (r.items || []).find(x => String(x.id) === String(id));
+    if (!m) return;
+    $('#mDialog').innerHTML = `<div class="card" style="margin-top:16px">
+      <h3>编辑记忆 #${m.id}</h3>
+      <div class="field"><label>内容</label><textarea id="eContent">${h(m.content)}</textarea></div>
+      <div style="height:10px"></div>
+      <div class="grid g3">
+        <div class="field"><label>类型</label><select id="eType">
+          ${Object.entries({ identity: '身份', goal: '目标', habit: '习惯', preference: '偏好',
+            emotion: '情绪', weakness: '薄弱', misconception: '误区', observation: '观察' })
+            .map(([k, v]) => `<option value="${k}" ${k === m.type ? 'selected' : ''}>${v}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>层级</label><select id="eScope">
+          <option value="global" ${m.scope === 'global' ? 'selected' : ''}>全局（跨学科）</option>
+          <option value="subject" ${m.scope === 'subject' ? 'selected' : ''}>分科目</option>
+        </select></div>
+        <div class="field"><label>科目（仅分科目时需要）</label><select id="eSubject">
+          <option value="">—</option>
+          ${SUBJECTS.map(([k, n]) => `<option value="${k}" ${k === m.subject ? 'selected' : ''}>${n}</option>`).join('')}
+        </select></div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="field"><label>依据（原话片段，可留空）</label><input id="eEv" type="text" value="${h(m.evidence || '')}" /></div>
+      <div style="height:14px"></div>
+      <div class="row"><button class="btn primary" id="eSave">保存</button>
+        <button class="btn ghost" id="eCancel">取消</button></div>
+    </div>`;
+    $('#eCancel').onclick = () => { $('#mDialog').innerHTML = ''; };
+    $('#eSave').onclick = async () => {
+      try {
+        await api.put(`/api/memory/${id}`, {
+          content: $('#eContent').value.trim(),
+          type: $('#eType').value,
+          scope: $('#eScope').value,
+          subject_key: $('#eSubject').value || null,
+          evidence: $('#eEv').value.trim()
+        });
+        $('#mDialog').innerHTML = '';
+        toast('已保存');
+        load();
+      } catch (e) { toast(e.message, true); }
+    };
+  };
+
+  // ---------- 手动添加 ----------
+  $('#mAdd').onclick = () => {
+    $('#mDialog').innerHTML = `<div class="card" style="margin-top:16px">
+      <h3>手动添加一条记忆</h3>
+      <p class="hint">手填的默认置信度 100%，会被优先采用，也不会随时间衰减。</p>
+      <div class="field"><label>内容（一句话，不超过 40 字最好）</label>
+        <textarea id="nContent" placeholder="例如：我晚上 8 点后注意力最好"></textarea></div>
+      <div style="height:10px"></div>
+      <div class="grid g3">
+        <div class="field"><label>层级</label><select id="nScope">
+          <option value="global">全局（跨学科）</option><option value="subject">分科目</option>
+        </select></div>
+        <div class="field"><label>科目</label><select id="nSubject">
+          <option value="">—</option>
+          ${SUBJECTS.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>类型</label><select id="nType">
+          ${Object.entries({ identity: '身份', goal: '目标', habit: '习惯', preference: '偏好',
+            emotion: '情绪', weakness: '薄弱', misconception: '误区', observation: '观察' })
+            .map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+        </select></div>
+      </div>
+      <div style="height:14px"></div>
+      <div class="row"><button class="btn primary" id="nSave">添加</button>
+        <button class="btn ghost" id="nCancel">取消</button></div>
+    </div>`;
+    $('#nCancel').onclick = () => { $('#mDialog').innerHTML = ''; };
+    $('#nSave').onclick = async () => {
+      const content = $('#nContent').value.trim();
+      if (!content) return toast('内容不能为空', true);
+      try {
+        const r = await api.post('/api/memory', {
+          content, scope: $('#nScope').value,
+          subject_key: $('#nSubject').value || null,
+          type: $('#nType').value, pinned: true
+        });
+        if (r.ok === false) return toast(r.message, true);
+        $('#mDialog').innerHTML = '';
+        toast('已添加并置顶');
+        load();
+      } catch (e) { toast(e.message, true); }
+    };
+  };
+
+  // ---------- 预览注入 ----------
+  $('#mPreview').onclick = async () => {
+    const subj = $('#mSubject').value || state.subject;
+    const q = $('#mQ').value.trim() || '二次函数怎么求';
+    try {
+      const r = await api.get(`/api/memory/preview?subject=${encodeURIComponent(subj)}&query=${encodeURIComponent(q)}`);
+      const box = (list) => list.length
+        ? list.map(m => `<div class="mem-ev" style="margin:4px 0">· [${h(m.type_cn)}] ${h(m.content)}
+            <span class="pill" style="margin-left:6px">置信 ${(m.confidence * 100).toFixed(0)}%</span></div>`).join('')
+        : '<div class="hint">（无）</div>';
+      $('#mDialog').innerHTML = `<div class="card" style="margin-top:16px">
+        <h3>这次对话会注入 ${r.count} 条记忆</h3>
+        <p class="hint">模拟问题：「${h(r.query)}」 · 科目：${h(SUBJ_NAME[r.subject] || r.subject)}</p>
+        <div style="height:10px"></div>
+        <h5 class="hint">全局记忆（${r.global.length}）</h5>${box(r.global)}
+        <div style="height:10px"></div>
+        <h5 class="hint">科目记忆（${r.subject_items.length}）</h5>${box(r.subject_items)}
+        <div class="a" style="margin-top:12px;color:#5a6577">${h(r.note)}</div>
+      </div>`;
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // ---------- 清理 ----------
+  $('#mClean').onclick = async () => {
+    if (!confirm('将删除所有你判定为「不准确」的记忆，确定？')) return;
+    try {
+      const r = await api.post('/api/memory/cleanup');
+      toast(`已清理 ${r.deleted} 条`);
+      load();
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // ---------- 筛选交互 ----------
+  $$('#mScopeTabs .btn').forEach(b => {
+    if (b.dataset.s === MEM_STATE.scope) b.classList.add('primary');
+    b.onclick = () => {
+      MEM_STATE.scope = b.dataset.s;
+      $$('#mScopeTabs .btn').forEach(x => x.classList.toggle('primary', x.dataset.s === MEM_STATE.scope));
+      load();
+    };
+  });
+  $('#mSubject').value = MEM_STATE.subject;
+  $('#mSubject').onchange = () => { MEM_STATE.subject = $('#mSubject').value; load(); };
+  $('#mAccuracy').value = MEM_STATE.accuracy;
+  $('#mAccuracy').onchange = () => { MEM_STATE.accuracy = $('#mAccuracy').value; load(); };
+  $('#mQ').value = MEM_STATE.q;
+  $('#mQ').oninput = () => {
+    MEM_STATE.q = $('#mQ').value.trim();
+    clearTimeout(state._memT);
+    state._memT = setTimeout(load, 250);
+  };
+
+  await load();
 }
 
 /* ---------------- 视图：设置 ---------------- */

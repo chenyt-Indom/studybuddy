@@ -95,12 +95,13 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   check('进入主界面（boot 成功）', booted);
 
   const navs = Array.from(doc.querySelectorAll('.side nav a')).map(a => a.textContent.trim());
-  check('侧边栏导航', navs.length === 7, navs.join(' / '));
+  check('侧边栏导航', navs.length === 8, navs.join(' / '));
 
   // 逐个视图渲染
   for (const [key, mustHave] of [
     ['dashboard', '学情看板'], ['review', '复习中心'], ['mistakes', '错题本'],
-    ['insight', '洞察'], ['profile', '学习档案'], ['settings', '选择供应商']
+    ['insight', '洞察'], ['memory', '记忆库'], ['profile', '学习档案'],
+    ['settings', '选择供应商']
   ]) {
     const link = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === key);
     link.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

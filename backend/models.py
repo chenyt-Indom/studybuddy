@@ -246,21 +246,46 @@ class Mistake(Base):
 
 
 class Memory(Base):
-    """长期记忆库（第八章）。带权重衰减。"""
+    """长期记忆库（第八章）。
+
+    分两层：
+      scope='global'  → 跨科目的、关于"这个人"的长期特征（身份/目标/习惯/偏好/情绪基调）
+      scope='subject' → 单个科目的学科记忆（薄弱点/理解误区/易错题型）
+
+    可核查：每条都带 evidence（触发它的原话片段）和 accuracy（用户判定）。
+    """
 
     __tablename__ = "memories"
-    __table_args__ = (Index("idx_mem_user", "user_id", "subject_key"),)
+    __table_args__ = (Index("idx_mem_user", "user_id", "scope", "subject_key"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+
+    scope: Mapped[str] = mapped_column(String(16), default="subject")  # global / subject
     subject_key: Mapped[str | None] = mapped_column(String(32), default=None)
     mtype: Mapped[str] = mapped_column(String(24), default="observation")
     content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # 可核查性：这句话是从哪来的
+    evidence: Mapped[str | None] = mapped_column(Text, default=None)
+    source: Mapped[str] = mapped_column(String(16), default="chat")  # chat/manual/exam/mistake
+    source_message_id: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    # 模型自评置信度（0~1），前端要如实展示，不能当成事实
+    confidence: Mapped[float] = mapped_column(Float, default=0.6)
+
     keywords: Mapped[str] = mapped_column(String(256), default="")
     weight: Mapped[float] = mapped_column(Float, default=1.0)
     hits: Mapped[int] = mapped_column(Integer, default=0)
+
+    # 用户判定：unverified / correct / wrong
+    accuracy: Mapped[str] = mapped_column(String(16), default="unverified")
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
 
 
 class PatternInsight(Base):

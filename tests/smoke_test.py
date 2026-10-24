@@ -308,9 +308,60 @@ check("可以关闭联网", _cfg.search_enabled is False)
 _cfg.set_search_enabled(True)
 check("可以重新开启", _cfg.search_enabled is True)
 
+print("20. 记忆库：双层结构 + 可核查")
+st0 = c.get("/api/memory/stats").json()
+check("统计接口可用", all(k in st0 for k in ("total", "global", "subject", "accuracy_rate")),
+      f"总数={st0.get('total')} 全局={st0.get('global')} 科目={st0.get('subject')}")
+check("无判定时准确率为 null（不假装 100%）",
+      st0.get("judged", 0) > 0 or st0.get("accuracy_rate") is None,
+      f"judged={st0.get('judged')} rate={st0.get('accuracy_rate')}")
+
+# 手动加一条全局记忆
+r = c.post("/api/memory", json={
+    "content": "E2E测试：我习惯早上背单词", "scope": "global",
+    "type": "habit", "pinned": True, "evidence": "我每天早上背单词",
+})
+m = r.json()["item"]
+check("可手动新增全局记忆", r.json().get("ok") and m["scope"] == "global",
+      f"id={m['id']} 置信={m['confidence']}")
+check("手填的置信度为 1.0", m["confidence"] == 1.0)
+
+# 全局记忆应出现在任意科目的注入预览里
+pv = c.get("/api/memory/preview", params={"subject": "math", "query": "早上背单词"}).json()
+check("全局记忆跨科目生效", any(x["id"] == m["id"] for x in pv["global"]),
+      f"全局 {len(pv['global'])} 条")
+
+# 编辑
+r = c.put(f"/api/memory/{m['id']}", json={"content": "E2E测试：我习惯早上 7 点背单词"})
+check("可编辑内容", r.json()["item"]["content"].endswith("7 点背单词"))
+
+# 判定不准确 → 立即停用
+c.post(f"/api/memory/{m['id']}/verify", json={"accuracy": "wrong"})
+pv2 = c.get("/api/memory/preview", params={"subject": "math", "query": "早上背单词"}).json()
+check("判为不准确后不再注入",
+      not any(x["id"] == m["id"] for x in pv2["global"]))
+lst_wrong = c.get("/api/memory", params={"accuracy": "wrong"}).json()["items"]
+check("能按判定筛选", any(x["id"] == m["id"] for x in lst_wrong))
+
+# 改判回准确 → 恢复使用
+c.post(f"/api/memory/{m['id']}/verify", json={"accuracy": "correct"})
+pv3 = c.get("/api/memory/preview", params={"subject": "math", "query": "早上背单词"}).json()
+check("改判准确后恢复注入", any(x["id"] == m["id"] for x in pv3["global"]))
+
+# 删除
+r = c.delete(f"/api/memory/{m['id']}")
+check("可删除记忆", r.json().get("ok") is True)
+after = c.get("/api/memory?scope=global").json()["items"]
+check("删除后不再出现", not any(x["id"] == m["id"] for x in after))
+
+st1 = c.get("/api/memory/stats").json()
+check("统计接口在增删后仍正常", "total" in st1,
+      f"当前 {st1['total']} 条（全局 {st1['global']} / 科目 {st1['subject']}）")
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:
     print("失败项:", fail)
     sys.exit(1)
 print("全部通过")
+

@@ -81,11 +81,37 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
             f"相关（该生该处掌握度 {cs['related_mastery']:.0%}），可适时提及联动。"
         )
 
-    # ⑦ 历史记忆
+    # ⑦ 历史记忆（分两层展示：关于这个人 / 关于这个学科）
     mems = ctx.get("memories") or []
     if mems:
-        mem = "\n".join(f"- [{m['type']}] {m['content']}" for m in mems)
-        parts.append(f"【历史观察】\n{mem}")
+        type_cn = {
+            "identity": "身份", "goal": "目标", "habit": "习惯", "preference": "偏好",
+            "emotion": "情绪", "weakness": "薄弱", "misconception": "误区",
+            "observation": "观察",
+        }
+        g = [m for m in mems if m.get("scope") == "global"]
+        s_ = [m for m in mems if m.get("scope") != "global"]
+        blocks = []
+        if g:
+            blocks.append(
+                "关于这个学生（跨学科，长期有效）：\n"
+                + "\n".join(
+                    f"- [{type_cn.get(m['type'], m['type'])}] {m['content']}"
+                    for m in g
+                )
+            )
+        if s_:
+            blocks.append(
+                "关于本学科的历史观察：\n"
+                + "\n".join(
+                    f"- [{type_cn.get(m['type'], m['type'])}] {m['content']}"
+                    for m in s_
+                )
+            )
+        parts.append(
+            "【历史观察】以下是用长期记忆库记录的信息，用于调整讲法，**不要直接复述给用户**。\n"
+            "如果它与本次对话内容矛盾，以本次对话为准。\n\n" + "\n\n".join(blocks)
+        )
 
     # ⑧ 联网检索到的实时资料（有才加）
     search_ctx = ctx.get("search_context")

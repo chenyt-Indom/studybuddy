@@ -20,7 +20,7 @@ from .forgetting.scheduler import check_review_in_chat, ensure_review_state
 from .kp import candidates, match_kp_codes
 from .llm import get_provider
 from .memory.extractor import extract_memories, persist_memories
-from .memory.recall import recall
+from .memory.recall import global_memories, recall
 from .memory.store import decay_all
 from .pattern.miner import list_insights
 from .profile.builder import (
@@ -75,6 +75,10 @@ def history(db, conversation_id: int, limit: int = HISTORY_TURNS) -> list[dict]:
 def build_context(db, user_id: int, subject_key: str, user_text: str) -> dict:
     """②③④ 各引擎提供上下文。"""
     mems = recall(db, user_id, user_text, subject_key=subject_key, limit=5)
+    # 全局记忆不依赖关键词：置顶的 / 高权重的每轮都带上
+    gl = global_memories(db, user_id, limit=4)
+    seen = {m["id"] for m in mems}
+    mems = gl + [m for m in mems if m["id"] not in seen]
     patterns = list_insights(db, user_id, subject_key)
     kp_codes = match_kp_codes(db, subject_key, user_text, top=1)
     cs = cross_hint(db, user_id, kp_codes[0]) if kp_codes else None
@@ -104,8 +108,10 @@ async def stream_reply(
     with session_scope() as db:
         conv = get_or_create_conversation(db, user_id, subject_key)
         conv_id = conv.id
-        db.add(Message(conversation_id=conv_id, role="user", content=user_text))
+        user_msg = Message(conversation_id=conv_id, role="user", content=user_text)
+        db.add(user_msg)
         db.flush()
+        user_msg_id = user_msg.id
         hist = history(db, conv_id)
         ctx = build_context(db, user_id, subject_key, user_text)
         review_note = check_review_in_chat(db, user_id, subject_key)
@@ -130,6 +136,9 @@ async def stream_reply(
         "style": ctx.get("primary_style"),
         "weak_points": ctx.get("weak_points"),
         "memories_used": len(ctx.get("memories") or []),
+        "memories_global": sum(1 for m in (ctx.get("memories") or []) if m.get("scope") == "global"),
+        "memories_subject": sum(1 for m in (ctx.get("memories") or []) if m.get("scope") == "subject"),
+        "memories": (ctx.get("memories") or [])[:8],
         "patterns_used": len(ctx.get("patterns") or []),
         "cross_subject": ctx.get("cross_subject"),
         "kp_hint": kp_hint,
@@ -201,7 +210,8 @@ async def stream_reply(
 
     # ⑥ 异步后处理：抽取记忆 / 更新掌握度 / 排复习 / 重算风格
     asyncio.create_task(
-        _post_process(user_id, subject_key, conv_id, user_text, answer, kp_hint)
+        _post_process(user_id, subject_key, conv_id, user_text, answer, kp_hint,
+                      user_msg_id)
     )
 
     if review_note:
@@ -236,6 +246,7 @@ async def _post_process(
     user_text: str,
     answer: str,
     kp_hint: list[str],
+    user_msg_id: int | None = None,
 ) -> None:
     """异步后处理管道。失败不影响主流程。"""
     try:
@@ -243,7 +254,7 @@ async def _post_process(
         items = await extract_memories(dialogue, subject_key)
 
         with session_scope() as db:
-            persist_memories(db, user_id, items)
+            persist_memories(db, user_id, items, source_message_id=user_msg_id)
 
             # 对话里提到的知识点 → 建复习状态（source=chat）
             for code in kp_hint[:2]:

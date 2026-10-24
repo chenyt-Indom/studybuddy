@@ -1,4 +1,4 @@
-"""记忆提取（方案 8.2 / 附录 A2）。
+"""记忆提取（方案 8.2 / 附录 A2）—— 双层提取。
 
 ⚠ 必须异步：写记忆不能拖慢对话响应。走 asyncio.create_task。
 """
@@ -10,7 +10,11 @@ from ..llm import get_provider
 from ..util import parse_json_loose
 from .store import add_memory
 
-VALID_TYPES = {"weakness", "misconception", "preference", "habit", "emotion", "goal"}
+VALID_TYPES = {
+    "identity", "goal", "habit", "preference", "emotion",
+    "weakness", "misconception", "observation",
+}
+VALID_SCOPES = {"global", "subject"}
 
 
 async def extract_memories(conversation_text: str, subject: str) -> list[dict]:
@@ -30,7 +34,7 @@ async def extract_memories(conversation_text: str, subject: str) -> list[dict]:
                 },
             ],
             temperature=TEMPERATURE_MAP["extract_memory"],
-            max_tokens=800,
+            max_tokens=1500,
             scene="extract_memory",
         )
         data = parse_json_loose(raw, (list, dict))
@@ -43,13 +47,29 @@ async def extract_memories(conversation_text: str, subject: str) -> list[dict]:
             content = str(item.get("content") or "").strip()
             if not content:
                 continue
-            t = str(item.get("type") or "observation").strip()
+
+            scope = str(item.get("scope") or "subject").strip().lower()
+            if scope not in VALID_SCOPES:
+                scope = "subject"
+            t = str(item.get("type") or "observation").strip().lower()
+            if t not in VALID_TYPES:
+                t = "observation"
+
+            try:
+                conf = float(item.get("confidence"))
+            except (TypeError, ValueError):
+                conf = 0.6
+            conf = max(0.0, min(1.0, conf))
+
             out.append(
                 {
-                    "type": t if t in VALID_TYPES else "observation",
+                    "scope": scope,
+                    "type": t,
                     "content": content[:120],
+                    "evidence": str(item.get("evidence") or "").strip()[:300] or None,
                     "keywords": str(item.get("keywords") or "")[:200],
-                    "subject": subject,
+                    "confidence": conf,
+                    "subject": subject if scope == "subject" else None,
                 }
             )
         return out
@@ -57,7 +77,9 @@ async def extract_memories(conversation_text: str, subject: str) -> list[dict]:
         return []
 
 
-def persist_memories(db, user_id: int, items: list[dict]) -> int:
+def persist_memories(
+    db, user_id: int, items: list[dict], source_message_id: int | None = None
+) -> int:
     n = 0
     for it in items:
         if add_memory(
@@ -65,8 +87,13 @@ def persist_memories(db, user_id: int, items: list[dict]) -> int:
             user_id=user_id,
             content=it["content"],
             mtype=it["type"],
+            scope=it.get("scope", "subject"),
             subject_key=it.get("subject"),
             keywords=it.get("keywords", ""),
+            evidence=it.get("evidence"),
+            confidence=it.get("confidence", 0.6),
+            source="chat",
+            source_message_id=source_message_id,
         ):
             n += 1
     return n
