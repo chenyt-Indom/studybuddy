@@ -18,38 +18,61 @@
 
 ---
 
-## 一、星辰大模型 API（先说这个）
+## 一、星辰大模型 API
 
-**接口地址（已实测连通）**
+### ⚠️ 先纠正一个常见误解
+
+**`https://ai.ctaigw.cn/v1` 是 API 端点，不是网页。**
+用浏览器直接打开它，只会得到一段 401 JSON 或者一片空白 —— **这是正常的，不是坏了**。
+它是给程序调用的，必须带 `Authorization: Bearer <AppKey>` 请求头才会返回数据。
+
+要在浏览器里操作（申请 Key、看模型、看调用示例），请打开**控制台**：
+
+### 🔗 浏览器能打开的链接（这些才是网页）
+
+| 用途 | 链接 |
+| --- | --- |
+| **星辰控制台首页** | https://ctxirang.ctyun.cn/maas/home |
+| **申请 AppKey** | https://ctxirang.ctyun.cn/maas/service/serviceGroup |
+| **模型广场 / 预置服务** | https://ctxirang.ctyun.cn/maas/inlineService |
+| **官方 API 文档** | https://www.ctyun.cn/document/11061839/11062312 |
+
+AppKey 获取路径：**控制台 → 系统管理 → APP Key 管理 → 创建服务组 → 绑定服务 → 获取 AppKey**
+
+### API 端点（给程序用的，浏览器打不开属正常）
 
 | 项 | 值 |
 | --- | --- |
-| 大陆节点 | `https://ai.ctaigw.cn` |
-| 版本前缀 | `/v1` |
-| **Base URL** | **`https://ai.ctaigw.cn/v1`** |
-| 对话接口 | `POST https://ai.ctaigw.cn/v1/chat/completions` |
-| 模型列表 | `GET https://ai.ctaigw.cn/v1/models` |
+| 大陆终端节点 | `https://ai.ctaigw.cn` |
+| **Base URL（普通推理）** | **`https://ai.ctaigw.cn/v1`** |
+| **Base URL（编程 Token Plan）** | **`https://ai.ctaigw.cn/coding/v1`** |
+| Base URL（全球区域） | `https://ai.ctaigw.com/{region}/v1`，region ∈ `amer` / `eu` / `as` |
+| 对话接口 | `POST {base}/chat/completions` |
 | 鉴权 | `Authorization: Bearer <AppKey>` |
 | 协议 | OpenAI 兼容 ✅ |
+| 建议请求头 | `User-Agent`（不带可能被安全护栏拦截，本项目已自动加） |
 
-实测：不带 Key 请求上面两个接口都返回
+实测：不带 Key 请求返回
 
 ```json
 {"error":{"message":"未携带Authorization请求头","type":"authentication_error",
           "code":"no_authentication_credential"}}
 ```
 
-HTTP 401 —— 说明网关真实存在且是标准 OpenAI 兼容格式，可以直接用 OpenAI SDK 或任意
-OpenAI 客户端对接。
+HTTP 401 + `content-type: application/json` —— 证明网关真实在线、标准 OpenAI 兼容。
 
-> ⚠️ **两件必须自己确认的事**（官方文档明确提示）
-> 1. **`model` 填什么** —— 去控制台「模型广场 → 模型详情 → 调用示例」查看。
->    本项目做了自动探测：设置页点「探测可用模型」，走 `GET /v1/models` 拉取列表，点一下填入。
-> 2. **真实请求地址** —— 官方说明「不同区域、不同类型的模型，终端请求地址有所差异」。
->    如果 `ai.ctaigw.cn` 不通，去控制台「调用示例」看真实地址，填到设置页的 base_url 里。
->    不要去抄示例值。
+### 三个必踩的坑
 
-**获取 AppKey**：平台 → 系统管理 → APP Key 管理。
+1. **`/v1` 和 `/coding/v1` 不能混用**
+   普通推理是 `/v1`；买了**编程 Token Plan** 的专属地址是 `/coding/v1`。
+   填错会报模型不存在或鉴权失败。设置页给了预设按钮，点一下就行。
+2. **`model` 到底填什么**
+   以「控制台 → 模型广场 → 模型详情页 → 调用示例」为准。
+   设置页有「探测可用模型」按钮，走 `GET {base}/models` —— 但这是 OpenAI 的惯例接口，
+   **星辰官方文档并没有列出它**，部分套餐下会 404。探测失败不代表配置错了，
+   以控制台抄到的名字为准。
+3. **全球区域域名不同**
+   大陆是 `ai.ctaigw.cn`，全球是 `ai.ctaigw.com/{region}/`，不是 `.cn`。
 
 ---
 

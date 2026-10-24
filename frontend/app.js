@@ -769,14 +769,15 @@ async function viewSettings(root) {
     <div class="desc">接入中国电信星辰大模型 · AppKey 只存本地 data/settings.json，不进仓库</div></div></div>
     <div class="grid g2">
       <div class="card"><h3>星辰大模型</h3>
-        <div class="field"><label>base_url（官方：https://ai.ctaigw.cn/v1）</label>
+        <div class="field"><label>base_url（不同的模型/套餐地址不同，点下面预设快速填）</label>
           <input id="cBase" type="text" placeholder="https://ai.ctaigw.cn/v1" /></div>
-        <div style="height:10px"></div>
+        <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px" id="presetBox"></div>
+        <div style="height:12px"></div>
         <div class="field"><label>AppKey</label>
-          <input id="cKey" type="password" placeholder="在控制台 → 系统管理 → APP Key 管理 获取" /></div>
+          <input id="cKey" type="password" placeholder="控制台 → 系统管理 → APP Key 管理 → 创建服务组" /></div>
         <div style="height:10px"></div>
-        <div class="field"><label>model（不确定就先探测）</label>
-          <input id="cModel" type="text" placeholder="点下面的「探测可用模型」自动获取" /></div>
+        <div class="field"><label>model（不确定就去控制台「模型广场」抄，或试试探测）</label>
+          <input id="cModel" type="text" placeholder="在控制台-模型广场-模型详情页-调用示例里看" /></div>
         <div style="height:14px"></div>
         <div class="row" style="flex-wrap:wrap">
           <button class="btn primary" id="saveC">保存配置</button>
@@ -788,16 +789,31 @@ async function viewSettings(root) {
         <div id="testOut"></div>
       </div>
       <div class="card"><h3>接入指引</h3>
+        <p class="hint" style="margin:0 0 10px">
+          <b>先搞清楚一件事</b>：<span class="mono">ai.ctaigw.cn</span> 是 <b>API 端点</b>，不是网页。
+          用浏览器直接打开它，只会得到 401 或一片空白 —— 这是正常的，不是坏了。
+          要在浏览器里操作，请打开下面的控制台。
+        </p>
+        <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:14px">
+          <a class="btn sm" href="https://ctxirang.ctyun.cn/maas/home" target="_blank" rel="noopener">① 打开星辰控制台 ↗</a>
+          <a class="btn sm" href="https://ctxirang.ctyun.cn/maas/service/serviceGroup" target="_blank" rel="noopener">② 申请 AppKey ↗</a>
+          <a class="btn sm" href="https://ctxirang.ctyun.cn/maas/inlineService" target="_blank" rel="noopener">③ 模型广场（抄 model 名）↗</a>
+          <a class="btn sm ghost" href="https://www.ctyun.cn/document/11061839/11062312" target="_blank" rel="noopener">官方 API 文档 ↗</a>
+        </div>
         <ol class="hint" style="padding-left:18px;line-height:2">
-          <li>到星辰大模型平台注册并实名认证</li>
-          <li>控制台 → <b>模型广场</b>：确认你要用的模型叫什么</li>
-          <li>控制台 → <b>系统管理 → APP Key 管理</b>：拿到 AppKey</li>
-          <li>把 AppKey 填进来，点「探测可用模型」直接拉取列表</li>
-          <li>保存后，左下角会从「离线演示模式」变成「星辰模型已接入」</li>
+          <li>星辰控制台登录（天翼云账号），完成实名认证</li>
+          <li><b>模型推理 → 预置服务</b>：开通/购买你要用的模型（或用 Token Plan 量包）</li>
+          <li><b>系统管理 → APP Key 管理 → 创建服务组 → 绑定服务</b>：拿到 AppKey</li>
+          <li><b>模型广场 → 模型详情页 → 调用示例</b>：这里能看到真实的 base_url 和 model 名</li>
+          <li>把 AppKey 和 model 填到左边，保存</li>
+          <li>左下角状态从「离线演示模式」变成「星辰模型已接入」即成功</li>
         </ol>
         <div style="height:10px"></div>
-        <p class="hint"><b>注意</b>：官方说明「不同区域、不同类型的模型，终端请求地址有所差异」。
-          如果 <span class="mono">ai.ctaigw.cn</span> 连不上，去控制台的「调用示例」看真实地址，填到上面。</p>
+        <p class="hint"><b>常见坑</b>：<br>
+          · 普通推理用 <span class="mono">/v1</span>；买了<b>编程 Token Plan</b> 的用
+          <span class="mono">/coding/v1</span>，两者不能混用<br>
+          · 全球区域是 <span class="mono">ai.ctaigw.com/{amer|eu|as}/v1</span>，不是 .cn<br>
+          · 请求头建议带 User-Agent，否则可能被安全护栏拦截（本项目已自动加）</p>
         <p class="hint">没填 AppKey 也能用：学情看板、复习调度、错题归因、掌握度计算
           这些都不依赖大模型；只有对话和复习卡生成需要真实模型。</p>
       </div>
@@ -820,7 +836,11 @@ async function viewSettings(root) {
     try {
       const r = await api.get('/api/system/models');
       if (!r.ok) {
-        $('#modelList').innerHTML = `<div class="empty">${h(r.message || '探测失败')}</div>`;
+        $('#modelList').innerHTML = `<div class="insight medium" style="margin-top:12px">
+          <div class="t">探测没成功（这不代表配置错了）</div>
+          <div class="d">${h(r.message || '未知原因')}</div>
+          ${r.hint ? `<div class="a">${h(r.hint)}</div>` : ''}
+        </div>`;
         return;
       }
       $('#modelList').innerHTML = `<div style="margin-top:12px"><h5 class="hint">可用模型（${r.count} 个，点一下填入）</h5>
@@ -858,6 +878,17 @@ async function viewSettings(root) {
     $('#cKey').placeholder = c.has_key ? `已保存：${c.app_key_masked}（留空则不修改）` : '粘贴你的 AppKey';
     $('#cModel').value = c.model || '';
     state.sysConfig = c;
+    // base_url 预设（官方文档核实的五种终端节点）
+    const pbox = $('#presetBox');
+    if (pbox && c.presets) {
+      pbox.innerHTML = c.presets.map(p =>
+        `<span class="pill brand" style="cursor:pointer" data-u="${h(p.value)}"
+           title="${h(p.value)}">${h(p.label)}</span>`).join('');
+      $$('#presetBox .pill').forEach(el => el.onclick = () => {
+        $('#cBase').value = el.dataset.u;
+        toast('已填入 base_url，别忘了点保存');
+      });
+    }
   } catch (e) { toast(e.message, true); }
 }
 

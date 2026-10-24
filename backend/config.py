@@ -25,6 +25,22 @@ SECRET_FILE = DATA_DIR / ".secret"
 # 官方说明：不同区域、不同类型的模型，终端请求地址有差异，以控制台「调用示例」为准。
 DEFAULT_BASE_URL = "https://ai.ctaigw.cn/v1"
 
+# 官方文档核实的可用 base_url（https://www.ctyun.cn/document/11061839/11062312）
+# 终端节点：大陆 ai.ctaigw.cn；全球 ai.ctaigw.com/{region}/，region ∈ amer/eu/as
+BASE_URL_PRESETS = [
+    {"label": "大陆 · 普通推理", "value": "https://ai.ctaigw.cn/v1"},
+    {"label": "大陆 · 编程 Token Plan", "value": "https://ai.ctaigw.cn/coding/v1"},
+    {"label": "全球 · 美洲", "value": "https://ai.ctaigw.com/amer/v1"},
+    {"label": "全球 · 欧洲", "value": "https://ai.ctaigw.com/eu/v1"},
+    {"label": "全球 · 亚洲", "value": "https://ai.ctaigw.com/as/v1"},
+]
+
+# 平台入口（这些才是浏览器能打开的网页；ai.ctaigw.cn 是 API，不是网页）
+CONSOLE_URL = "https://ctxirang.ctyun.cn/maas/home"
+APPKEY_URL = "https://ctxirang.ctyun.cn/maas/service/serviceGroup"
+MODEL_SQUARE_URL = "https://ctxirang.ctyun.cn/maas/inlineService"
+DOC_URL = "https://www.ctyun.cn/document/11061839/11062312"
+
 # 分场景温度（方案 4.3）
 TEMPERATURE_MAP = {
     "tutor": 0.7,
