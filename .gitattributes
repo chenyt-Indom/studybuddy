@@ -1,0 +1,3 @@
+# .bat 必须保持 CRLF，否则 cmd 解析 if 块会出问题
+*.bat text eol=crlf
+*.sh  text eol=lf

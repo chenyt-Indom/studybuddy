@@ -1,0 +1,877 @@
+/* StudyBuddy 前端 —— 无构建单页应用。
+   为什么不用 Vue + Vite：PC 端先行验证，零 npm、零 CDN，双击能跑；
+   等三条主线跑通再迁 Vue 也不迟（后端接口不用改）。 */
+
+const SUBJECTS = [
+  ['math', '数学'], ['physics', '物理'], ['chemistry', '化学'],
+  ['biology', '生物'], ['chinese', '语文'], ['english', '英语']
+];
+const SUBJ_NAME = Object.fromEntries(SUBJECTS);
+const GRADE_OPTIONS = {
+  primary: [['primary_1', '一年级'], ['primary_2', '二年级'], ['primary_3', '三年级'],
+            ['primary_4', '四年级'], ['primary_5', '五年级'], ['primary_6', '六年级']],
+  junior: [['junior_1', '初一'], ['junior_2', '初二'], ['junior_3', '初三']],
+  senior: [['senior_1', '高一'], ['senior_2', '高二'], ['senior_3', '高三']],
+  college: [['college_1', '大一'], ['college_2', '大二'], ['college_3', '大三'], ['college_4', '大四']]
+};
+const ERROR_TYPES = {
+  concept: '概念不清', calculation: '计算失误', careless: '粗心',
+  method: '方法不当', transfer: '迁移失败', timeout: '时间不够'
+};
+const NAV = [
+  ['chat', '学科对话', '💬'],
+  ['dashboard', '学情看板', '📊'],
+  ['review', '复习中心', '🔁'],
+  ['mistakes', '错题本', '📕'],
+  ['insight', '洞察', '💡'],
+  ['profile', '学习档案', '👤'],
+  ['settings', '设置', '⚙️']
+];
+
+const state = {
+  token: localStorage.getItem('sb_token') || '',
+  user: JSON.parse(localStorage.getItem('sb_user') || 'null'),
+  view: 'chat',
+  subject: 'math',
+  sysConfig: null,
+  chatMeta: null,
+  reviewSel: null
+};
+
+/* ---------------- 基础工具 ---------------- */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const h = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+
+let toastTimer = null;
+function toast(msg, isErr = false) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'on' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, 2800);
+}
+
+/* ---------------- API ---------------- */
+async function req(path, opt = {}) {
+  const headers = Object.assign({ 'Content-Type': 'application/json' }, opt.headers || {});
+  if (state.token) headers.Authorization = 'Bearer ' + state.token;
+  const res = await fetch(path, Object.assign({}, opt, { headers }));
+  let body = null;
+  const txt = await res.text();
+  try { body = txt ? JSON.parse(txt) : null; } catch (e) { body = { raw: txt }; }
+  if (!res.ok) {
+    const msg = (body && (body.detail || body.message)) || `HTTP ${res.status}`;
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return body;
+}
+const api = {
+  get: (p) => req(p),
+  post: (p, d) => req(p, { method: 'POST', body: d ? JSON.stringify(d) : undefined }),
+  put: (p, d) => req(p, { method: 'PUT', body: JSON.stringify(d || {}) }),
+  del: (p) => req(p, { method: 'DELETE' })
+};
+
+/* ---------------- 极简 Markdown 渲染 ---------------- */
+function md(src) {
+  if (!src) return '';
+  let s = h(src);
+  const blocks = [];
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    blocks.push(`<pre><code>${code.replace(/\n$/, '')}</code></pre>`);
+    return `\u0000B${blocks.length - 1}\u0000`;
+  });
+  s = s.replace(/^### (.*)$/gm, '<h3>$1</h3>')
+       .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+       .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+       .replace(/^&gt; (.*)$/gm, '<blockquote>$1</blockquote>')
+       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+       .replace(/`([^`]+)`/g, '<code>$1</code>')
+       .replace(/\n{2,}/g, '</p><p>')
+       .replace(/\n/g, '<br>');
+  s = s.replace(/(?:^|<br>)[-*] (.*?)(?=<br>|$)/g, '<br>• $1');
+  s = '<p>' + s + '</p>';
+  s = s.replace(/<p>\s*<\/p>/g, '');
+  s = s.replace(/\u0000B(\d+)\u0000/g, (_, i) => blocks[+i]);
+  return s;
+}
+
+/* ---------------- 登录 ---------------- */
+function renderAuth(mode = 'login') {
+  document.getElementById('app').innerHTML = `
+  <div class="auth-wrap"><div class="auth-card">
+    <h1>StudyBuddy</h1>
+    <p class="sub">智能学习助手 · 越用越懂你</p>
+    <div class="tabs">
+      <button class="${mode === 'login' ? 'on' : ''}" data-m="login">登录</button>
+      <button class="${mode === 'register' ? 'on' : ''}" data-m="register">注册</button>
+    </div>
+    <div class="field"><label>用户名</label><input id="u" type="text" placeholder="2~32 个字符" /></div>
+    <div class="field"><label>密码</label><input id="p" type="password" placeholder="至少 6 位" /></div>
+    ${mode === 'register' ? '<div class="field"><label>昵称（可选）</label><input id="n" type="text" /></div>' : ''}
+    <div style="height:8px"></div>
+    <button class="btn primary" id="go" style="width:100%;padding:11px">
+      ${mode === 'login' ? '登录' : '注册并登录'}
+    </button>
+    <p class="hint" style="margin-top:16px;text-align:center">
+      本地单机运行，数据只存在你自己的电脑上
+    </p>
+  </div></div>`;
+
+  $$('.auth-card .tabs button').forEach(b => b.onclick = () => renderAuth(b.dataset.m));
+  const doAuth = async () => {
+    const username = $('#u').value.trim(), password = $('#p').value;
+    if (!username || !password) return toast('用户名和密码都要填', true);
+    try {
+      const path = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const nickname = mode === 'register' ? ($('#n') ? $('#n').value.trim() : '') : '';
+      const res = await api.post(path, { username, password, nickname });
+      state.token = res.token; state.user = res.user;
+      localStorage.setItem('sb_token', res.token);
+      localStorage.setItem('sb_user', JSON.stringify(res.user));
+      renderApp();
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#go').onclick = doAuth;
+  $('#p').onkeydown = (e) => { if (e.key === 'Enter') doAuth(); };
+}
+
+/* ---------------- 外壳 ---------------- */
+function renderApp() {
+  document.getElementById('app').innerHTML = `
+  <div class="app">
+    <aside class="side">
+      <div class="logo">StudyBuddy <small>v0.1</small></div>
+      <nav>${NAV.map(([k, n, ico]) =>
+        `<a data-v="${k}" class="${state.view === k ? 'on' : ''}"><span class="ico">${ico}</span>${n}</a>`
+      ).join('')}</nav>
+      <div class="foot">
+        <div id="modeLine">检测中…</div>
+        <div style="margin-top:6px">${h(state.user ? state.user.nickname : '')}</div>
+      </div>
+    </aside>
+    <main class="main" id="main"></main>
+  </div>`;
+
+  $$('.side nav a').forEach(a => a.onclick = () => {
+    state.view = a.dataset.v;
+    $$('.side nav a').forEach(x => x.classList.toggle('on', x.dataset.v === state.view));
+    route();
+  });
+  refreshMode();
+  route();
+}
+
+async function refreshMode() {
+  try {
+    state.sysConfig = await api.get('/api/system/config');
+    const live = state.sysConfig.mode === 'teleai';
+    const line = $('#modeLine');
+    if (line) line.innerHTML = `<span class="mode-dot ${live ? 'mode-live' : 'mode-mock'}"></span>`
+      + (live ? '星辰模型已接入' : '离线演示模式');
+  } catch (e) { /* ignore */ }
+}
+
+function route() {
+  const m = $('#main');
+  m.innerHTML = '';
+  ({ chat: viewChat, dashboard: viewDashboard, review: viewReview, mistakes: viewMistakes,
+     insight: viewInsight, profile: viewProfile, settings: viewSettings }[state.view] || viewChat)(m);
+}
+
+/* ---------------- 视图：对话 ---------------- */
+async function viewChat(root) {
+  root.innerHTML = `
+  <div class="page-h">
+    <div><h2>学科对话</h2>
+      <div class="desc">每个科目一条独立对话，永久保留 · 右侧是本次回答实际用到的画像与记忆</div></div>
+    <button class="btn" id="refreshStyle">重算我的认知风格</button>
+  </div>
+  <div class="chat-layout">
+    <div class="chat-main">
+      <div class="subjects">
+        ${SUBJECTS.map(([k, n]) => `<button data-s="${k}" class="${state.subject === k ? 'on' : ''}">${n}</button>`).join('')}
+      </div>
+      <div class="msgs" id="msgs"><div class="empty">选择一个科目，开始提问</div></div>
+      <div class="composer">
+        <textarea id="inp" placeholder="例如：二次函数的顶点怎么求？我上次配方法错了…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button class="btn primary" id="send">发送</button>
+      </div>
+    </div>
+    <aside class="ctx" id="ctx">
+      <h4>本次回答的上下文</h4>
+      <p class="hint">发一条消息后，这里会显示系统实际注入了哪些信息。</p>
+    </aside>
+  </div>`;
+
+  $$('.subjects button').forEach(b => b.onclick = () => {
+    state.subject = b.dataset.s;
+    $$('.subjects button').forEach(x => x.classList.toggle('on', x.dataset.s === state.subject));
+    loadHistory();
+  });
+  $('#refreshStyle').onclick = async () => {
+    try {
+      const r = await api.post('/api/profile/refresh-style');
+      toast(`认知风格：${r.style.primary || '样本不足'}（置信度 ${(r.style.confidence * 100).toFixed(0)}%）`);
+    } catch (e) { toast(e.message, true); }
+  };
+  const inp = $('#inp');
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  };
+  $('#send').onclick = sendMessage;
+  await loadHistory();
+}
+
+async function loadHistory() {
+  const box = $('#msgs');
+  if (!box) return;
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const convs = await api.get('/api/chat/conversations');
+    const conv = convs.find(c => c.subject === state.subject);
+    if (!conv) {
+      box.innerHTML = `<div class="empty">「${SUBJ_NAME[state.subject]}」还没有对话<br>直接在下面提问就会自动建立</div>`;
+      return;
+    }
+    const msgs = await api.get('/api/chat/messages?conversation_id=' + conv.id);
+    if (!msgs.length) {
+      box.innerHTML = `<div class="empty">「${SUBJ_NAME[state.subject]}」还没有对话<br>直接在下面提问就会自动建立</div>`;
+      return;
+    }
+    box.innerHTML = msgs.map(m => bubble(m.role, m.content)).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch (e) {
+    box.innerHTML = `<div class="empty">读取失败：${h(e.message)}</div>`;
+  }
+}
+
+function bubble(role, content) {
+  const isUser = role === 'user';
+  return `<div class="msg ${isUser ? 'user' : 'bot'}">
+    <div class="av">${isUser ? '我' : 'SB'}</div>
+    <div class="bubble">${isUser ? h(content).replace(/\n/g, '<br>') : md(content)}</div>
+  </div>`;
+}
+
+async function sendMessage() {
+  const inp = $('#inp'), box = $('#msgs'), btn = $('#send');
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = ''; btn.disabled = true;
+
+  if (box.querySelector('.empty')) box.innerHTML = '';
+  box.insertAdjacentHTML('beforeend', bubble('user', text));
+  const botId = 'b' + Date.now();
+  box.insertAdjacentHTML('beforeend', `<div class="msg bot" id="${botId}">
+    <div class="av">SB</div><div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div></div>`);
+  box.scrollTop = box.scrollHeight;
+
+  const bubbleEl = $('#' + botId + ' .bubble');
+  let acc = '';
+
+  try {
+    const res = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.token },
+      body: JSON.stringify({ subject: state.subject, message: text })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+        if (evt.type === 'meta') {
+          state.chatMeta = evt;
+          renderCtx(evt);
+        } else if (evt.type === 'delta') {
+          acc += evt.text;
+          bubbleEl.innerHTML = md(acc);
+          box.scrollTop = box.scrollHeight;
+        } else if (evt.type === 'error') {
+          bubbleEl.innerHTML = `<span style="color:#b91c1c">${h(evt.message)}</span>`;
+        }
+      }
+    }
+    if (acc) bubbleEl.innerHTML = md(acc);
+    else bubbleEl.innerHTML = '<span class="hint">（没有内容返回）</span>';
+  } catch (e) {
+    bubbleEl.innerHTML = `<span style="color:#b91c1c">请求失败：${h(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+    inp.focus();
+  }
+}
+
+function renderCtx(meta) {
+  const box = $('#ctx');
+  if (!box) return;
+  const styleCn = { visual: '视觉型', verbal: '语言型', kinesthetic: '动手型', logical: '逻辑型' };
+  const sec = (title, inner) => `<div class="sec"><h5>${title}</h5>${inner}</div>`;
+
+  let html = `<h4>本次回答的上下文</h4>
+    <p class="hint">同样的问题，不同学生会得到完全不同的 Prompt —— 这就是专精化。</p>`;
+
+  html += sec('认知风格', `<div class="item"><b>${styleCn[meta.style] || '样本不足'}</b>
+    ${meta.style ? '（按此风格调整讲解方式）' : '（再多聊几轮就能推断出来）'}</div>`);
+
+  if (meta.weak_points && meta.weak_points.length) {
+    html += sec('薄弱知识点', meta.weak_points.map(w =>
+      `<div class="item"><b>${h(w.name)}</b> 掌握度 ${(w.mastery * 100).toFixed(0)}%</div>`).join(''));
+  } else {
+    html += sec('薄弱知识点', '<div class="item" style="color:#8d97a8">暂无记录</div>');
+  }
+
+  if (meta.cross_subject) {
+    const c = meta.cross_subject;
+    html += sec('跨科关联', `<div class="item">与 <b>${h(c.related_subject_cn)}</b> 的
+      「<b>${h(c.related_kp)}</b>」相关<br>
+      <span class="hint">该处掌握度 ${(c.related_mastery * 100).toFixed(0)}% ·
+      ${h(c.relation_cn)}</span></div>`);
+  }
+
+  html += sec('召回的长期记忆',
+    meta.memories_used > 0
+      ? `<div class="item">命中 <b>${meta.memories_used}</b> 条历史观察，已注入 Prompt</div>`
+      : '<div class="item" style="color:#8d97a8">本次没有命中相关记忆</div>');
+
+  html += sec('激活的模式洞察',
+    meta.patterns_used > 0
+      ? `<div class="item">本次带入 <b>${meta.patterns_used}</b> 条洞察</div>`
+      : '<div class="item" style="color:#8d97a8">数据还不够，先去录成绩/错题</div>');
+
+  box.innerHTML = html;
+}
+
+/* ---------------- 视图：看板 ---------------- */
+async function viewDashboard(root) {
+  root.innerHTML = `<div class="page-h"><div><h2>学情看板</h2>
+    <div class="desc">数据全部来自你自己的录入 · 不联网、不上传</div></div>
+    <button class="btn primary" id="runMine">重新分析</button></div>
+    <div class="grid g4" id="stats"></div>
+    <div style="height:16px"></div>
+    <div class="grid g2">
+      <div class="card"><h3>成绩趋势 <span class="tag">统一换算百分制</span></h3><div id="trend"></div></div>
+      <div class="card"><h3>各科掌握度 <span class="tag">雷达</span></h3><div id="radar"></div></div>
+    </div>
+    <div style="height:16px"></div>
+    <div class="card"><h3>最新洞察</h3><div id="insights"></div></div>`;
+
+  $('#runMine').onclick = async () => {
+    try {
+      const r = await api.post('/api/insight/run');
+      toast(`分析完成，命中 ${r.found} 条洞察`);
+      viewDashboard(root);
+    } catch (e) { toast(e.message, true); }
+  };
+
+  try {
+    const [rs, trend, radar, ins] = await Promise.all([
+      api.get('/api/review/stats'), api.get('/api/grades/trend'),
+      api.get('/api/cross/radar'), api.get('/api/insight')
+    ]);
+    $('#stats').innerHTML = [
+      ['待复习', rs.due, '个知识点今天该复习'],
+      ['已跟踪知识点', rs.tracked, '进入 SM-2 调度'],
+      ['平均记忆强度', (rs.avg_strength * 100).toFixed(0) + '%', '越低越紧迫'],
+      ['洞察', ins.insights.length, '条已识别模式']
+    ].map(([t, v, s]) => `<div class="card">
+        <div class="hint">${t}</div>
+        <div class="stat" style="margin:6px 0 2px">${v}<small>${s}</small></div>
+      </div>`).join('');
+
+    $('#trend').innerHTML = Charts.lineChart(trend.series,
+      { yMin: 0, yMax: 100, emptyText: '还没有成绩记录 —— 去「错题本」旁边的接口录一条' });
+    $('#radar').innerHTML = Charts.radarChart(radar.radar);
+
+    $('#insights').innerHTML = ins.insights.length
+      ? ins.insights.slice(0, 4).map(insightCard).join('')
+      : '<div class="empty">还没有洞察。录入一次带逐题记录的考试成绩，或攒够 10 道错题，系统就会自动分析。</div>';
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function insightCard(i) {
+  return `<div class="insight ${h(i.severity)}">
+    <div class="t">${h(i.title)} ${i.subject ? `<span class="pill">${h(SUBJ_NAME[i.subject] || i.subject)}</span>` : ''}</div>
+    <div class="d">${md(i.detail)}</div>
+    ${i.action ? `<div class="a">👉 ${md(i.action)}</div>` : ''}
+  </div>`;
+}
+
+/* ---------------- 视图：复习 ---------------- */
+async function viewReview(root) {
+  root.innerHTML = `<div class="page-h"><div><h2>复习中心</h2>
+    <div class="desc">SM-2 动态间隔 · 按「快忘了 × 重要 × 本来就弱」排序</div></div></div>
+    <div class="grid g2">
+      <div class="card"><h3>今日队列 <span class="tag" id="qCount"></span></h3>
+        <div id="queue"></div></div>
+      <div class="card"><h3>遗忘曲线 <span class="tag" id="curveTitle">选一个知识点</span></h3>
+        <div id="curve"><div class="empty">点左边队列里的知识点查看</div></div>
+        <div id="cards"></div>
+      </div>
+    </div>`;
+
+  try {
+    const r = await api.get('/api/review/queue');
+    if (!$('#queue')) return;
+    const items = r.items || [];
+    $('#qCount').textContent = `${items.length} 个`;
+    if (!items.length) {
+      $('#queue').innerHTML = `<div class="empty">今天没有到期的复习<br>
+        去对话里问几个问题，或在错题本录几道错题，系统会自动排程</div>`;
+      return;
+    }
+    $('#queue').innerHTML = items.map((it, idx) => `
+      <div class="q-item" data-kp="${h(it.kp_code)}">
+        <div style="flex:1;min-width:0">
+          <div class="name">${h(it.kp_name)}
+            <span class="pill">${h(SUBJ_NAME[it.subject] || it.subject)}</span></div>
+          <div class="meta">记忆强度 ${(it.strength * 100).toFixed(0)}% ·
+            优先级 ${it.priority} · 已过 ${it.overdue_days} 天 ·
+            EF ${it.ef} · 间隔 ${it.interval} 天</div>
+          <div class="bar" style="margin-top:6px;max-width:240px">
+            <i style="width:${Math.max(3, it.strength * 100)}%;
+              background:${it.strength < 0.4 ? '#dc2626' : it.strength < 0.7 ? '#f59e0b' : '#16a34a'}"></i>
+          </div>
+        </div>
+        <div class="quality">
+          ${[0, 1, 2, 3, 4, 5].map(q => `<button data-q="${q}" title="${q}分">${q}</button>`).join('')}
+        </div>
+      </div>`).join('');
+
+    $$('#queue .q-item').forEach(row => {
+      const kp = row.dataset.kp;
+      row.querySelector('.name').style.cursor = 'pointer';
+      row.querySelector('.name').onclick = () => showCurve(kp);
+      row.querySelectorAll('.quality button').forEach(b => b.onclick = async (ev) => {
+        ev.stopPropagation();
+        try {
+          const res = await api.post(`/api/review/${encodeURIComponent(kp)}/grade`,
+            { quality: Number(b.dataset.q) });
+          toast(`已记录：${b.dataset.q} 分 → 下次 ${res.interval_days} 天后复习（EF ${res.after.ef}）`);
+          viewReview(root);
+        } catch (e) { toast(e.message, true); }
+      });
+    });
+    if (items[0]) showCurve(items[0].kp_code);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function showCurve(kp) {
+  try {
+    const [c, st] = await Promise.all([
+      api.get('/api/review/curve?kp_code=' + encodeURIComponent(kp)),
+      api.get('/api/review/state?kp_code=' + encodeURIComponent(kp))
+    ]);
+    if (!$('#curve') || !$('#curveTitle')) return;
+    $('#curveTitle').textContent = (c.kp_name || '') + ` · EF ${c.ef || '-'}`;
+    $('#curve').innerHTML = Charts.curveChart(c.points);
+    $('#cards').innerHTML = `
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+        <button class="btn sm" id="genCards">生成复习卡片（3 张）</button>
+        <span class="hint">用星辰模型针对你的薄弱点出题</span>
+      </div>
+      <div id="cardBox"></div>`;
+    $('#genCards').onclick = async () => {
+      $('#cardBox').innerHTML = '<div class="empty">生成中…</div>';
+      try {
+        const r = await api.get('/api/review/cards?kp_code=' + encodeURIComponent(kp));
+        $('#cardBox').innerHTML = (r.cards || []).map((c, i) => `
+          <div class="insight" style="margin-top:10px">
+            <div class="t">卡片 ${i + 1}：${h(c.q)}</div>
+            <div class="d">答：${h(c.a)}</div>
+            <div class="a">提示：${h(c.hint)}</div>
+          </div>`).join('');
+      } catch (e) { $('#cardBox').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+    };
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 视图：错题本 ---------------- */
+async function viewMistakes(root) {
+  root.innerHTML = `<div class="page-h"><div><h2>错题本</h2>
+    <div class="desc">错因六分类是 P3 洞察的原料 · 录入时自动归因知识点</div></div></div>
+    <div class="grid g2">
+      <div class="card">
+        <h3>录入一道错题</h3>
+        <div class="field"><label>科目</label>
+          <select id="mSubj">${SUBJECTS.map(([k, n]) => `<option value="${k}" ${k === state.subject ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        </div>
+        <div style="height:10px"></div>
+        <div class="field"><label>题目 / 你的错误描述</label>
+          <textarea id="mContent" placeholder="把题干贴进来，或写「二次函数顶点那题，我用配方法算错了」"></textarea>
+        </div>
+        <div style="height:10px"></div>
+        <div class="grid g2">
+          <div class="field"><label>错因（六选一）</label>
+            <select id="mErr"><option value="">先不填</option>
+              ${Object.entries(ERROR_TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+            </select></div>
+          <div class="field"><label>难度层级</label>
+            <select id="mTier"><option value="">先不填</option>
+              <option value="basic">基础题</option><option value="medium">中档题</option>
+              <option value="hard">压轴题</option></select></div>
+        </div>
+        <div style="height:14px"></div>
+        <div class="row">
+          <button class="btn primary" id="addM">保存（自动归因知识点）</button>
+          <button class="btn" id="previewCand">看候选知识点</button>
+        </div>
+        <div id="candBox"></div>
+      </div>
+      <div class="card"><h3>错因画像</h3><div id="errChart"></div>
+        <div id="errInsight"></div></div>
+    </div>
+    <div style="height:16px"></div>
+    <div class="card"><h3>错题列表</h3><div id="mList"></div></div>`;
+
+  const load = async () => {
+    const subj = $('#mSubj').value;
+    try {
+      const [list, stats] = await Promise.all([
+        api.get('/api/mistakes?subject=' + subj),
+        api.get('/api/mistakes/stats?subject=' + subj)
+      ]);
+      const a = stats.analysis || {};
+      if (a.distribution_cn && Object.keys(a.distribution_cn).length) {
+        $('#errChart').innerHTML = Charts.barChart(
+          Object.entries(a.distribution_cn).map(([k, v]) => ({ label: k, value: v, color: '#8b5cf6' })), {});
+      } else {
+        $('#errChart').innerHTML = `<div class="empty">${h(a.message || '还没有足够错题做归因分析')}</div>`;
+      }
+      $('#errInsight').innerHTML = a.insight ? insightCard(a.insight) : '';
+
+      $('#mList').innerHTML = list.length ? `<table class="tbl">
+        <thead><tr><th>科目</th><th>内容</th><th>知识点</th><th>错因</th><th>时间</th></tr></thead>
+        <tbody>${list.map(m => `<tr>
+          <td>${h(SUBJ_NAME[m.subject] || m.subject)}</td>
+          <td>${h(m.content).slice(0, 90)}</td>
+          <td>${h(m.kp_name || '—')}</td>
+          <td>${m.error_type_cn ? `<span class="pill warn">${h(m.error_type_cn)}</span>` : '—'}</td>
+          <td class="hint">${h((m.created_at || '').slice(0, 10))}</td>
+        </tr>`).join('')}</tbody></table>`
+        : '<div class="empty">还没有错题</div>';
+    } catch (e) { toast(e.message, true); }
+  };
+
+  $('#mSubj').onchange = load;
+  $('#previewCand').onclick = async () => {
+    try {
+      const r = await api.get(`/api/mistakes/candidates?subject=${$('#mSubj').value}&text=${encodeURIComponent($('#mContent').value)}`);
+      $('#candBox').innerHTML = `<div style="margin-top:12px"><h5 class="hint">候选知识点（模型只能从这里选，防止编造）</h5>
+        <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px">
+        ${(r.candidates || []).map(c => `<span class="pill">${h(c.name)}</span>`).join('')}</div></div>`;
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#addM').onclick = async () => {
+    const content = $('#mContent').value.trim();
+    if (!content) return toast('先写点内容', true);
+    try {
+      const r = await api.post('/api/mistakes', {
+        subject: $('#mSubj').value, content,
+        error_type: $('#mErr').value || null, tier: $('#mTier').value || null
+      });
+      toast(`已保存，归因到「${r.kp_name || '未匹配'}」（${r.attributed_by === 'auto' ? '自动' : '手动'}）`);
+      $('#mContent').value = '';
+      load();
+    } catch (e) { toast(e.message, true); }
+  };
+  await load();
+}
+
+/* ---------------- 视图：洞察 ---------------- */
+async function viewInsight(root) {
+  root.innerHTML = `<div class="page-h"><div><h2>洞察</h2>
+    <div class="desc">L3 模式洞察：从数据里推断出你自己都没意识到的问题</div></div>
+    <button class="btn primary" id="run">立即分析</button></div>
+    <div class="grid g2">
+      <div class="card"><h3>题型分层</h3><div id="tier"></div></div>
+      <div class="card"><h3>知识断层</h3><div id="gaps"></div></div>
+    </div>
+    <div style="height:16px"></div>
+    <div class="card"><h3>全部洞察</h3><div id="list"></div></div>`;
+
+  const load = async () => {
+    try {
+      const [ins, detail] = await Promise.all([
+        api.get('/api/insight'), api.get('/api/insight/detail?subject=' + state.subject)
+      ]);
+      $('#list').innerHTML = ins.insights.length
+        ? ins.insights.map(insightCard).join('')
+        : '<div class="empty">还没有洞察。先录一次带逐题对错的成绩。</div>';
+
+      const t = (detail.tiers || {});
+      if (t.insufficient) {
+        $('#tier').innerHTML = `<div class="empty">${h(t.message)}</div>`;
+      } else if (t.tiers) {
+        const items = Object.entries(t.tiers).map(([k, v]) => ({
+          label: k, value: v.accuracy, text: `${(v.accuracy * 100).toFixed(0)}% (${v.count}题)`,
+          color: v.accuracy < 0.5 ? '#dc2626' : v.accuracy < 0.75 ? '#f59e0b' : '#16a34a'
+        }));
+        $('#tier').innerHTML = Charts.barChart(items, { max: 1 });
+      } else {
+        $('#tier').innerHTML = '<div class="empty">暂无数据</div>';
+      }
+
+      const gaps = detail.gaps || [];
+      $('#gaps').innerHTML = gaps.length ? gaps.map(g => insightCard(g.insight)).join('')
+        : '<div class="empty">没有发现「前置也没掌握」的断层</div>';
+    } catch (e) { toast(e.message, true); }
+  };
+
+  $('#run').onclick = async () => {
+    try {
+      const r = await api.post('/api/insight/run');
+      toast(`分析完成，命中 ${r.found} 条`);
+      load();
+    } catch (e) { toast(e.message, true); }
+  };
+  await load();
+}
+
+/* ---------------- 视图：档案 ---------------- */
+async function viewProfile(root) {
+  root.innerHTML = `<div class="page-h"><div><h2>学习档案</h2>
+    <div class="desc">四维画像：学业基础 / 认知风格 / 学习习惯 / 心理状态</div></div>
+    <button class="btn" id="showPrompt">看我的 Prompt 长什么样</button></div>
+    <div class="grid g2">
+      <div class="card"><h3>基础信息</h3>
+        <div class="grid g2">
+          <div class="field"><label>学段</label><select id="pStage">
+            <option value="primary">小学</option><option value="junior">初中</option>
+            <option value="senior">高中</option><option value="college">大学</option>
+          </select></div>
+          <div class="field"><label>年级</label><select id="pGrade"></select></div>
+          <div class="field"><label>目标专业/方向</label><input id="pMajor" type="text" placeholder="如：人工智能技术应用" /></div>
+          <div class="field"><label>目标分</label><input id="pScore" type="number" placeholder="如：600" /></div>
+        </div>
+        <div style="height:14px"></div>
+        <button class="btn primary" id="saveP">保存</button>
+      </div>
+      <div class="card"><h3>认知风格 <span class="tag">从对话行为推断，不是自己填的</span></h3>
+        <div id="styleChart"></div>
+        <div class="hint" id="styleTip" style="margin-top:8px"></div>
+      </div>
+    </div>
+    <div style="height:16px"></div>
+    <div class="grid g2">
+      <div class="card"><h3>心理状态</h3><div id="psy"></div></div>
+      <div class="card"><h3>薄弱知识点</h3><div id="weak"></div></div>
+    </div>
+    <div style="height:16px"></div>
+    <div class="card"><h3>长期记忆库 <span class="tag">写记忆是异步的，不会拖慢对话</span></h3>
+      <div id="mem"></div></div>
+    <div id="promptBox"></div>`;
+
+  // 事件先绑，避免 await 期间用户切换视图后元素已不存在
+  $('#showPrompt').onclick = async () => {
+    try {
+      const r = await api.get('/api/profile/prompt-preview?subject=' + state.subject);
+      const box = $('#promptBox');
+      if (!box) return;
+      box.innerHTML = `<div class="card" style="margin-top:16px">
+        <h3>你的辅导 Prompt（${h(SUBJ_NAME[r.subject] || r.subject)}）</h3>
+        <p class="hint">这是实际发给星辰大模型的 system prompt。不同学生拿到的完全不同。</p>
+        <pre class="mono" style="white-space:pre-wrap;background:#0f1730;color:#dbe3f5;
+          padding:16px;border-radius:10px;line-height:1.75;max-height:420px;overflow:auto">${h(r.system_prompt)}</pre>
+      </div>`;
+      box.scrollIntoView({ behavior: 'smooth' });
+    } catch (e) { toast(e.message, true); }
+  };
+
+  try {
+    const r = await api.get('/api/profile/overview');
+    if (!$('#pStage')) return;  // 视图已被切走
+    const p = r.profile;
+
+    $('#pStage').value = p.stage || 'senior';
+    const fillGrades = () => {
+      const list = GRADE_OPTIONS[$('#pStage').value] || [];
+      $('#pGrade').innerHTML = list.map(([k, n]) =>
+        `<option value="${k}" ${k === p.grade ? 'selected' : ''}>${n}</option>`).join('');
+    };
+    fillGrades();
+    $('#pStage').onchange = () => { fillGrades(); };
+    $('#pMajor').value = p.target_major || '';
+    $('#pScore').value = p.target_score || '';
+
+    $('#saveP').onclick = async () => {
+      try {
+        await api.put('/api/profile', {
+          stage: $('#pStage').value, grade: $('#pGrade').value,
+          target_major: $('#pMajor').value.trim() || null,
+          target_score: $('#pScore').value ? Number($('#pScore').value) : null
+        });
+        toast('已保存');
+      } catch (e) { toast(e.message, true); }
+    };
+
+    const styles = p.style_scores || {};
+    const styleCn = { visual: '视觉型', verbal: '语言型', kinesthetic: '动手型', logical: '逻辑型' };
+    if (Object.keys(styles).length && Object.values(styles).some(v => v > 0)) {
+      $('#styleChart').innerHTML = Charts.barChart(
+        Object.entries(styles).map(([k, v]) => ({ label: styleCn[k] || k, value: v, color: '#3b5bfd' })), {});
+      const n = r.style_samples || 0;
+      $('#styleTip').innerHTML = `主风格：<b>${styleCn[p.primary_style] || '—'}</b>，`
+        + `置信度 ${(p.style_confidence * 100).toFixed(0)}%`
+        + `<br>基于 ${n} 轮你的提问推断${n < 8 ? '（样本还少，多聊几轮会更准）' : ''}`;
+    } else {
+      $('#styleChart').innerHTML = `<div class="empty">还没有足够的对话样本<br>去「学科对话」多聊几轮</div>`;
+    }
+
+    const psyItem = (label, v, color) => `
+      <div style="margin-bottom:12px">
+        <div class="row" style="justify-content:space-between">
+          <span class="hint">${label}</span><span class="hint">${(v * 100).toFixed(0)}%</span></div>
+        <div class="bar" style="margin-top:5px"><i style="width:${v * 100}%;background:${color}"></i></div>
+      </div>`;
+    $('#psy').innerHTML = psyItem('信心水平', p.confidence_level, '#16a34a')
+      + psyItem('焦虑水平', p.anxiety_level, '#dc2626')
+      + psyItem('动机强度', p.motivation, '#3b5bfd')
+      + `<div class="hint">从最近对话的情绪词推断。信心低于 40% 时，AI 会自动切换成鼓励式语气。</div>`;
+
+    $('#weak').innerHTML = r.weak_points.length
+      ? r.weak_points.map(w => `<div class="item" style="display:flex;justify-content:space-between;
+          padding:7px 0;border-bottom:1px dashed #e6eaf2;font-size:13px">
+          <span>${h(w.name)} <span class="pill">${h(SUBJ_NAME[w.subject] || w.subject)}</span></span>
+          <b>${(w.mastery * 100).toFixed(0)}%</b></div>`).join('')
+      : '<div class="empty">还没有掌握度数据</div>';
+
+    const mem = await api.get('/api/system/memories');
+    $('#mem').innerHTML = mem.length ? `<table class="tbl">
+      <thead><tr><th>类型</th><th>内容</th><th>权重</th><th>命中</th></tr></thead>
+      <tbody>${mem.slice(0, 20).map(m => `<tr>
+        <td><span class="pill">${h(m.type)}</span></td>
+        <td>${h(m.content)}</td><td>${m.weight}</td><td>${m.hits}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">还没有长期记忆。多聊几轮后系统会自动提取。</div>';
+
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 视图：设置 ---------------- */
+async function viewSettings(root) {
+  root.innerHTML = `<div class="page-h"><div><h2>设置</h2>
+    <div class="desc">接入中国电信星辰大模型 · AppKey 只存本地 data/settings.json，不进仓库</div></div></div>
+    <div class="grid g2">
+      <div class="card"><h3>星辰大模型</h3>
+        <div class="field"><label>base_url（官方：https://ai.ctaigw.cn/v1）</label>
+          <input id="cBase" type="text" placeholder="https://ai.ctaigw.cn/v1" /></div>
+        <div style="height:10px"></div>
+        <div class="field"><label>AppKey</label>
+          <input id="cKey" type="password" placeholder="在控制台 → 系统管理 → APP Key 管理 获取" /></div>
+        <div style="height:10px"></div>
+        <div class="field"><label>model（不确定就先探测）</label>
+          <input id="cModel" type="text" placeholder="点下面的「探测可用模型」自动获取" /></div>
+        <div style="height:14px"></div>
+        <div class="row" style="flex-wrap:wrap">
+          <button class="btn primary" id="saveC">保存配置</button>
+          <button class="btn" id="probe">探测可用模型</button>
+          <button class="btn" id="testChat">测试对话</button>
+          <button class="btn ghost" id="health">连通性自检</button>
+        </div>
+        <div id="modelList"></div>
+        <div id="testOut"></div>
+      </div>
+      <div class="card"><h3>接入指引</h3>
+        <ol class="hint" style="padding-left:18px;line-height:2">
+          <li>到星辰大模型平台注册并实名认证</li>
+          <li>控制台 → <b>模型广场</b>：确认你要用的模型叫什么</li>
+          <li>控制台 → <b>系统管理 → APP Key 管理</b>：拿到 AppKey</li>
+          <li>把 AppKey 填进来，点「探测可用模型」直接拉取列表</li>
+          <li>保存后，左下角会从「离线演示模式」变成「星辰模型已接入」</li>
+        </ol>
+        <div style="height:10px"></div>
+        <p class="hint"><b>注意</b>：官方说明「不同区域、不同类型的模型，终端请求地址有所差异」。
+          如果 <span class="mono">ai.ctaigw.cn</span> 连不上，去控制台的「调用示例」看真实地址，填到上面。</p>
+        <p class="hint">没填 AppKey 也能用：学情看板、复习调度、错题归因、掌握度计算
+          这些都不依赖大模型；只有对话和复习卡生成需要真实模型。</p>
+      </div>
+    </div>`;
+
+  $('#saveC').onclick = async () => {
+    try {
+      const body = { base_url: $('#cBase').value.trim(), model: $('#cModel').value.trim() };
+      const k = $('#cKey').value.trim();
+      if (k) body.app_key = k;
+      const r = await api.post('/api/system/config', body);
+      state.sysConfig = r;
+      toast(r.configured ? '已保存，星辰模型已接入' : '已保存（AppKey 或 model 还没填全）');
+      refreshMode();
+    } catch (e) { toast(e.message, true); }
+  };
+
+  $('#probe').onclick = async () => {
+    $('#modelList').innerHTML = '<div class="empty">探测中…</div>';
+    try {
+      const r = await api.get('/api/system/models');
+      if (!r.ok) {
+        $('#modelList').innerHTML = `<div class="empty">${h(r.message || '探测失败')}</div>`;
+        return;
+      }
+      $('#modelList').innerHTML = `<div style="margin-top:12px"><h5 class="hint">可用模型（${r.count} 个，点一下填入）</h5>
+        <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
+        ${r.models.map(m => `<span class="pill brand" style="cursor:pointer" data-m="${h(m)}">${h(m)}</span>`).join('')}
+        </div></div>`;
+      $$('#modelList .pill').forEach(p => p.onclick = () => { $('#cModel').value = p.dataset.m; });
+    } catch (e) { $('#modelList').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+  };
+
+  $('#testChat').onclick = async () => {
+    $('#testOut').innerHTML = '<div class="empty">测试中…</div>';
+    try {
+      const r = await api.post('/api/system/test-chat');
+      $('#testOut').innerHTML = `<div class="insight ${r.ok ? '' : 'high'}" style="margin-top:12px">
+        <div class="t">${r.ok ? '✅ 连通成功' : '❌ 连通失败'}（provider: ${h(r.provider)}）</div>
+        <div class="d">${h(r.ok ? r.reply : r.message)}</div></div>`;
+    } catch (e) { $('#testOut').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+  };
+
+  $('#health').onclick = async () => {
+    $('#testOut').innerHTML = '<div class="empty">检查中…</div>';
+    try {
+      const r = await api.get('/api/system/health');
+      $('#testOut').innerHTML = `<pre class="mono" style="margin-top:12px;background:#f7f9fc;
+        padding:12px;border-radius:8px;white-space:pre-wrap">${h(JSON.stringify(r, null, 2))}</pre>`;
+    } catch (e) { $('#testOut').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+  };
+
+  // 事件绑完再拉配置，避免 await 期间视图被切走
+  try {
+    const c = await api.get('/api/system/config');
+    if (!$('#cBase')) return;
+    $('#cBase').value = c.base_url || '';
+    $('#cKey').placeholder = c.has_key ? `已保存：${c.app_key_masked}（留空则不修改）` : '粘贴你的 AppKey';
+    $('#cModel').value = c.model || '';
+    state.sysConfig = c;
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 启动 ---------------- */
+(async function boot() {
+  if (!state.token) return renderAuth('login');
+  try {
+    const me = await api.get('/api/auth/me');
+    state.user = me;
+    renderApp();
+  } catch (e) {
+    localStorage.removeItem('sb_token');
+    localStorage.removeItem('sb_user');
+    state.token = '';
+    renderAuth('login');
+  }
+})();
