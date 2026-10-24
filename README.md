@@ -1,21 +1,33 @@
 # StudyBuddy · 智能学习助手
 
 > 同样一个问题，不同的学生问，应该得到完全不同的回答。
+>   
 > 这个能力叫**专精化（Specialization）**——不是回答「问题」，而是回答「你问这个问题的这个人」。
 
 ![状态](https://img.shields.io/badge/status-v0.1.1%20%E5%88%9D%E7%A8%BF-brightgreen)
+
 ![发布](https://img.shields.io/badge/release-v0.1.0--draft-orange)
+
 ![模型](https://img.shields.io/badge/model-deepseek--flash-4d6bfe)
+
+
+
 ![后端](https://img.shields.io/badge/FastAPI-0.162-009688)
+
 ![前端](https://img.shields.io/badge/%E5%89%8D%E7%AB%AF-%E6%97%A0%E6%9E%84%E5%BB%BA%E5%8D%95%E9%A1%B5-lightgrey)
+
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
 > **当前版本：v0.1.1 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
+>   
 > 这是按方案落地的**第一版可运行骨架**：三条主线（专精化 / 遗忘曲线 / 跨科目）已跑通，
+>   
 > 但不是完成品。错题 OCR、教材配置、课表、周报尚未接入，记忆召回是降级实现。
+>   
 > 完整的功能边界见 [「已实现」](#四已实现v01) 与 [「还没做」](#六还没做说清楚别误会) 两节。
 
 按《学习智能助手智能体开发方案（专精化版）》v3 实现的 PC 端学习助手。
+  
 大模型可切换 **DeepSeek（默认）** 或 **中国电信星辰**。
 
 ---
@@ -23,21 +35,22 @@
 ## 一、大模型接入（当前默认 DeepSeek）
 
 同时支持 **DeepSeek** 与 **中国电信星辰**，都走 OpenAI 兼容协议，适配器同一套代码。
+  
 在设置页切换即可，不用改代码。
 
 ### DeepSeek 参数（已核对官方文档）
 
-| 项 | 值 |
-| --- | --- |
-| **Base URL（OpenAI 格式）** | **`https://api.deepseek.com/v1`** |
-| 对话接口 | `POST https://api.deepseek.com/v1/chat/completions` |
-| 模型列表 | `GET https://api.deepseek.com/v1/models` |
-| 鉴权 | `Authorization: Bearer <API Key>` |
-| **推荐模型** | **`deepseek-flash`**（= DeepSeek-V4.1-Flash-1017） |
-| 更强但更贵 | `deepseek-v4-pro` |
-| 上下文 / 最大输出 | 1M / 384K |
-| 拿 Key | https://platform.deepseek.com/api_keys |
-| 官方文档 | https://api-docs.deepseek.com/zh-cn/ |
+| 项                       | 值                                                   |
+| ----------------------- | --------------------------------------------------- |
+| **Base URL（OpenAI 格式）** | **`https://api.deepseek.com/v1`**                   |
+| 对话接口                    | `POST https://api.deepseek.com/v1/chat/completions` |
+| 模型列表                    | `GET https://api.deepseek.com/v1/models`            |
+| 鉴权                      | `Authorization: Bearer <API Key>`                   |
+| **推荐模型**                | **`deepseek-flash`**（= DeepSeek-V4.1-Flash-1017）    |
+| 更强但更贵                   | `deepseek-v4-pro`                                   |
+| 上下文 / 最大输出              | 1M / 384K                                           |
+| 拿 Key                   | <https://platform.deepseek.com/api_keys>            |
+| 官方文档                    | <https://api-docs.deepseek.com/zh-cn/>              |
 
 **模型名的坑（很重要）**
 
@@ -56,31 +69,33 @@
 - 参数放在请求体根层：`{"thinking": {"type": "enabled" | "disabled"}}`
 - 强度：`{"reasoning_effort": "low" | "high" | "max"}`
 - ⚠️ **思考模式下 `temperature` / `presence_penalty` / `frequency_penalty` 不生效**
+    
   （设置不报错，但被忽略）。所以「要温度」的场景必须显式关掉思考。
 - 流式返回里思维链在 `reasoning_content`，与 `content` 同级
 
 本项目按场景自动分配（`backend/config.py` 的 `THINKING_OFF_SCENES`）：
 
-| 场景 | 思考模式 | temperature | 原因 |
-| --- | --- | --- | --- |
-| `tutor` 讲解 | ✅ 开（effort=low） | 不传 | 讲课质量优先，接受延迟 |
-| `extract_memory` 抽记忆 | ❌ 关 | 0.1 | 要确定，不能瞎编 |
-| `mine_pattern` 挖模式 | ❌ 关 | 0.2 | 要严谨推断 |
-| `diagnose` 诊断 | ❌ 关 | 0.2 | 要客观 |
-| `generate_quiz` 出题 | ❌ 关 | 0.8 | 要多样性，避免重复出题 |
-| `report` 周报 | ❌ 关 | 0.6 | 自然但客观 |
+| 场景                   | 思考模式            | temperature | 原因          |
+| -------------------- | --------------- | ----------- | ----------- |
+| `tutor` 讲解           | ✅ 开（effort=low） | 不传          | 讲课质量优先，接受延迟 |
+| `extract_memory` 抽记忆 | ❌ 关             | 0.1         | 要确定，不能瞎编    |
+| `mine_pattern` 挖模式   | ❌ 关             | 0.2         | 要严谨推断       |
+| `diagnose` 诊断        | ❌ 关             | 0.2         | 要客观         |
+| `generate_quiz` 出题   | ❌ 关             | 0.8         | 要多样性，避免重复出题 |
+| `report` 周报          | ❌ 关             | 0.6         | 自然但客观       |
 
 ### 中国电信星辰（备选）
 
 **`https://ai.ctaigw.cn/v1` 是 API 端点，不是网页** —— 浏览器打开只会得到 401 或空白，
+  
 这是正常的。要在浏览器里操作请打开控制台：
 
-| 用途 | 链接 |
-| --- | --- |
-| 星辰控制台 | https://ctxirang.ctyun.cn/maas/home |
-| 申请 AppKey | https://ctxirang.ctyun.cn/maas/service/serviceGroup |
-| 模型广场 | https://ctxirang.ctyun.cn/maas/inlineService |
-| 官方文档 | https://www.ctyun.cn/document/11061839/11062312 |
+| 用途        | 链接                                                    |
+| --------- | ----------------------------------------------------- |
+| 星辰控制台     | <https://ctxirang.ctyun.cn/maas/home>                 |
+| 申请 AppKey | <https://ctxirang.ctyun.cn/maas/service/serviceGroup> |
+| 模型广场      | <https://ctxirang.ctyun.cn/maas/inlineService>        |
+| 官方文档      | <https://www.ctyun.cn/document/11061839/11062312>     |
 
 - 大陆：`https://ai.ctaigw.cn/v1`；编程 Token Plan：`/coding/v1`；全球：`ai.ctaigw.com/{amer|eu|as}/v1`
 - `model` 名必须自己填（控制台 → 模型广场 → 模型详情 → 调用示例）
@@ -92,6 +107,7 @@
 你说的是「能在前端直接输入 API，并且保密」。这两件事同时成立的关键在于：
 
 > **「前端输入」不等于「前端持有」。**
+>   
 > Key 提交一次就离开浏览器，之后所有调用都在后端完成。
 
 ### 数据流
@@ -123,6 +139,7 @@ data/secrets.bin   ← 密文，与「当前 Windows 用户 + 本机」绑定
 - ✅ 防：Key 出现在浏览器开发者工具、前端源码、localStorage、Git 提交历史、日志里
 - ✅ 防：拷走 `data/` 目录到别的电脑后直接读出 Key
 - ⚠️ 不防：**已经在你这台电脑上、以你的 Windows 账号运行的恶意程序**。
+    
   DPAPI 是按用户隔离的，同账号的进程理论上能调用解密。要做到那一步得靠系统层面的隔离。
 
 ### 环境变量（可选，优先级更高）
@@ -162,10 +179,13 @@ python -m uvicorn backend.main:app --reload --port 8787
 ### 接入星辰模型
 
 左下角「设置」→ 填 AppKey → 点「探测可用模型」→ 选中一个 model → 保存。
+  
 左下角状态会从 `离线演示模式` 变成 `星辰模型已接入`。
 
 > **没 AppKey 也能跑**：学情看板、复习调度、错题归因、知识点掌握度、跨科关联
+>   
 > 这些**不依赖大模型**的模块全部可用。只有对话和复习卡生成会落到「离线演示模式」，
+>   
 > 输出会明确标注这是占位内容，不会假装是真模型。
 
 ---
@@ -174,29 +194,32 @@ python -m uvicorn backend.main:app --reload --port 8787
 
 按方案「三条主线 + 两条通路」落地：
 
-| 模块 | 状态 | 说明 |
-| --- | --- | --- |
-| 大模型适配器 | ✅ | `LLMProvider` 抽象 + DeepSeek / 星辰（共用 OpenAI 兼容逻辑）+ `MockProvider` 降级；httpx 直连，不依赖 openai SDK |
-| 分场景温度 + 思考模式 | ✅ | 讲解开思考（effort=low）；抽记忆 0.1 / 挖模式 0.2 / 出题 0.8 / 周报 0.6 且关思考，保证温度生效 |
-| SSE 流式对话 | ✅ | 含 `X-Accel-Buffering: no`；思维链 `reasoning_content` 单独推前端做「深度思考中」提示 |
-| **API Key 保密** | ✅ | 前端输入一次 → DPAPI 加密落盘 → 接口只回掩码 → 浏览器不直连模型；8 项安全验收覆盖 |
-| **专精化引擎** | ✅ | 四维画像、认知风格推断（视觉/语言/动手/逻辑）、心理状态、讲解风格自适应 |
-| **遗忘曲线引擎** | ✅ | SM-2 三参数（EF/interval/repetitions）、指数衰减记忆强度、三级优先级队列、复习卡生成 |
-| **跨科目协调** | ✅ | 知识点关联图谱、跨科提示、协同建议、偏科预警 |
-| 模式挖掘 | ✅ | P1 题型分层、P3 错误归因、P4 知识断层；带样本门槛（30 题 / 10 错题） |
-| 长期记忆库 | ⚠️ | 提取/衰减/召回已实现，但召回用字符 bigram 而非向量检索（见「未完成」） |
-| 错题本 | ⚠️ | 手动录入 + 自动知识点归因 + 错因六分类；OCR 未接 |
-| 成绩与趋势 | ✅ | 逐题记录、百分制趋势、掌握度重算 |
-| 对话不可删除 | ✅ | 不提供删除接口，`is_deletable` 恒为 0，前端无删除按钮 |
-| 密钥不硬编码 | ✅ | 环境变量 > DPAPI 加密的 `data/secrets.bin` > `data/settings.json`；`data/` 已在 .gitignore |
+| 模块             | 状态 | 说明                                                                                          |
+| -------------- | -- | ------------------------------------------------------------------------------------------- |
+| 大模型适配器         | ✅  | `LLMProvider` 抽象 + DeepSeek / 星辰（共用 OpenAI 兼容逻辑）+ `MockProvider` 降级；httpx 直连，不依赖 openai SDK |
+| 分场景温度 + 思考模式   | ✅  | 讲解开思考（effort=low）；抽记忆 0.1 / 挖模式 0.2 / 出题 0.8 / 周报 0.6 且关思考，保证温度生效                           |
+| SSE 流式对话       | ✅  | 含 `X-Accel-Buffering: no`；思维链 `reasoning_content` 单独推前端做「深度思考中」提示                           |
+| **API Key 保密** | ✅  | 前端输入一次 → DPAPI 加密落盘 → 接口只回掩码 → 浏览器不直连模型；8 项安全验收覆盖                                           |
+| **专精化引擎**      | ✅  | 四维画像、认知风格推断（视觉/语言/动手/逻辑）、心理状态、讲解风格自适应                                                       |
+| **遗忘曲线引擎**     | ✅  | SM-2 三参数（EF/interval/repetitions）、指数衰减记忆强度、三级优先级队列、复习卡生成                                    |
+| **跨科目协调**      | ✅  | 知识点关联图谱、跨科提示、协同建议、偏科预警                                                                      |
+| 模式挖掘           | ✅  | P1 题型分层、P3 错误归因、P4 知识断层；带样本门槛（30 题 / 10 错题）                                                 |
+| 长期记忆库          | ⚠️ | 提取/衰减/召回已实现，但召回用字符 bigram 而非向量检索（见「未完成」）                                                    |
+| 错题本            | ⚠️ | 手动录入 + 自动知识点归因 + 错因六分类；OCR 未接                                                               |
+| 成绩与趋势          | ✅  | 逐题记录、百分制趋势、掌握度重算                                                                            |
+| 对话不可删除         | ✅  | 不提供删除接口，`is_deletable` 恒为 0，前端无删除按钮                                                         |
+| 密钥不硬编码         | ✅  | 环境变量 > DPAPI 加密的 `data/secrets.bin` > `data/settings.json`；`data/` 已在 .gitignore            |
 
 ### 怎么验证「专精化」真的生效
 
 学习档案页右上角有个「**看我的 Prompt 长什么样**」——点开会显示实际发给大模型的
+  
 system prompt。同一道题，视觉型 + 信心低 + 中档题弱的学生，和语言型 + 审题弱的
+  
 学生，拿到的 Prompt 完全不同。这是专精化最直接的证据，不是嘴上说说。
 
 对话页右侧还有一个「本次回答的上下文」面板，实时显示这次注入了几条记忆、
+  
 几条洞察、有没有跨科关联。
 
 ---
@@ -227,7 +250,7 @@ studybuddy/
 │       └── util.py             # 模型 JSON 输出健壮解析
 ├── frontend/                   # 无构建单页（原生 JS + 手写 SVG 图表）
 ├── tests/
-│   ├── smoke_test.py           # 后端端到端 34 项
+│   ├── smoke_test.py           # 后端端到端 38 项
 │   └── dom_test.cjs            # 前端 DOM 冒烟 13 项
 ├── data/                       # 运行时数据（不入库）
 └── start.bat
@@ -236,29 +259,34 @@ studybuddy/
 ### 技术选型的两处主动偏离
 
 1. **前端没用 Vue 3 + Element Plus + ECharts**，改成原生 JS + 手写 SVG。
+     
    原因：PC 端先行验证阶段，`npm install` 在有代理问题的机器上经常装不下来，
+     
    会让整套东西「跑不起来」。图表全部是手写 SVG，零 CDN、零构建，断网也能看。
+     
    等三条主线验证完再迁 Vue，**后端接口一行都不用改**。
-
 2. **记忆召回没用 ChromaDB**，改用 SQLite + 字符 bigram 重叠打分。
+     
    原因：ChromaDB 会拉 onnxruntime 等一堆重依赖。召回层已经按 `recall()` 抽象好，
+     
    换向量检索只改一个文件。这是明确的**降级实现，不是最终形态**。
 
 ---
 
 ## 六、还没做（说清楚，别误会）
 
-| 项 | 方案章节 | 现在的状态 |
-| --- | --- | --- |
-| 错题拍照 → OCR | 第九章 | ❌ 表结构（`mistake_images` / `ocr_tasks`）已建好，链路未接。需要 PaddleOCR + OpenCV 预处理 |
-| 教材版本适配 | 第十章 | ❌ 表结构已建（`user_region` / `user_textbook` / `textbook_kp`），高德定位与地区→教材映射未接 |
-| 课表 | 7.x | ❌ 表已建，无接口无界面 |
-| 学习周报 | 12.6 | ❌ 提示词已写好，未接 |
-| 向量记忆检索 | 第八章 | ⚠️ 降级为 bigram |
-| 前端 Vue 化 | 14.1 | ⚠️ 有意后置 |
-| 专业选择库 | 11.x | ❌ 未开始 |
+| 项          | 方案章节 | 现在的状态                                                                   |
+| ---------- | ---- | ----------------------------------------------------------------------- |
+| 错题拍照 → OCR | 第九章  | ❌ 表结构（`mistake_images` / `ocr_tasks`）已建好，链路未接。需要 PaddleOCR + OpenCV 预处理 |
+| 教材版本适配     | 第十章  | ❌ 表结构已建（`user_region` / `user_textbook` / `textbook_kp`），高德定位与地区→教材映射未接 |
+| 课表         | 7.x  | ❌ 表已建，无接口无界面                                                            |
+| 学习周报       | 12.6 | ❌ 提示词已写好，未接                                                             |
+| 向量记忆检索     | 第八章  | ⚠️ 降级为 bigram                                                           |
+| 前端 Vue 化   | 14.1 | ⚠️ 有意后置                                                                 |
+| 专业选择库      | 11.x | ❌ 未开始                                                                   |
 
 预置知识点目前是**数学 19 个 + 物理 12 个 + 化学 4 个 + 生物 2 个 + 语文 2 个 + 英语 2 个**
+  
 （按方案建议先跑通数学+物理）。要扩到小学/初中全学段，改 `backend/seeds.py` 即可。
 
 ---
@@ -274,11 +302,13 @@ npm i jsdom
 node tests\dom_test.cjs
 ```
 
-当前结果：**后端 34/34 通过，前端 13/13 通过**（其中 8 项是 API Key 保密性验收）。
+当前结果：**后端 38/38 通过，前端 13/13 通过**（其中 10 项是 API Key 保密性验收）。
 
 后端测试覆盖：注册登录 → 改画像 → 录 30 条逐题成绩 → 触发 P1/P4 洞察 →
+  
 复习队列 → SM-2 打分 → 遗忘曲线 → 错题自动归因 → 错因画像 → 跨科图谱 →
-认知风格推断 → SSE 流式 → 对话不可删除 → **API Key 保密性（8 项）**。
+  
+认知风格推断 → SSE 流式 → 对话不可删除 → **API Key 保密性（10 项，含真实调用链不崩 500）**。
 
 ---
 
@@ -304,7 +334,7 @@ node tests\dom_test.cjs
 - 设置页重写：供应商切换 / Key 输入（提交即清空）/ 掩码状态 / 一键删除 / 拉取模型列表
 - 前端对话新增「深度思考中…已想 N 字」提示，思维链不混进正文
 - 安全验收 8 项：响应无明文、只回掩码、磁盘无明文、可清除等
-- 测试：后端 34/34、前端 13/13
+- 测试：后端 38/38、前端 13/13
 
 ### v0.1 初稿 · `v0.1.0-draft`（2026-10-25）
 

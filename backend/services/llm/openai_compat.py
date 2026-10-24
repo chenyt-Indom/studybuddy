@@ -90,7 +90,8 @@ class OpenAICompatProvider(LLMProvider):
 
     # ---------- 对外 ----------
     async def chat(self, messages: list[dict], **kw) -> str:
-        scene = kw.get("scene", "tutor")
+        # 注意：scene 要 pop 掉，否则会和 _body 的位置参数重名
+        scene = kw.pop("scene", "tutor")
         body = self._body(messages, scene, **kw)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             r = await client.post(self._url("chat/completions"),
@@ -104,7 +105,7 @@ class OpenAICompatProvider(LLMProvider):
 
     async def stream(self, messages: list[dict], **kw) -> AsyncIterator[dict]:
         """yield {"type": "content"|"reasoning", "text": ...}"""
-        scene = kw.get("scene", "tutor")
+        scene = kw.pop("scene", "tutor")
         body = self._body(messages, scene, stream=True, **kw)
         body["stream"] = True
         async with httpx.AsyncClient(timeout=self.timeout) as client:

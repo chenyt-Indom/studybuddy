@@ -64,12 +64,12 @@ def write_config(body: ConfigIn, user: User = Depends(current_user)):
 
     target = body.provider or settings.provider
 
-    # 1) 非敏感配置
+    # 1) 非敏感配置（显式传空串表示清空，回落到该供应商默认值）
     patch: dict = {"provider": body.provider, "providers": {}}
     slot = {}
-    if body.base_url is not None and body.base_url.strip():
+    if body.base_url is not None:
         slot["base_url"] = body.base_url.strip()
-    if body.model is not None and body.model.strip():
+    if body.model is not None:
         slot["model"] = body.model.strip()
     if slot:
         patch["providers"][target] = slot
@@ -97,11 +97,24 @@ def clear_key(body: ClearKeyIn, user: User = Depends(current_user)):
     return {"ok": True, **_payload()}
 
 
+def _build_provider(name: str):
+    """按指定供应商构造实例（用于探测 / 测试，不影响当前选择）。"""
+    from ..services.llm.openai_compat import DeepSeekProvider, MockProvider, TeleAIProvider
+
+    key = settings.key_of(name)
+    model = settings._slot(name).get("model") or PROVIDERS[name]["default_model"]
+    if not key or not model:
+        return MockProvider()
+    base = settings._slot(name).get("base_url") or PROVIDERS[name]["base_url"]
+    cls = DeepSeekProvider if name == "deepseek" else TeleAIProvider
+    return cls(api_key=key, base_url=base, model=model)
+
+
 @router.get("/models")
 async def probe_models(provider: str | None = None, user: User = Depends(current_user)):
     """拉取可用模型列表。
 
-    DeepSeek 的 `/models` 是可用接口；星辰文档里没列，可能 404 —— 失败不代表配置错了。
+    探测失败不代表配置错了 —— 有些网关不开放 /models。
     """
     name = provider or settings.provider
     if name not in PROVIDERS:
@@ -109,9 +122,7 @@ async def probe_models(provider: str | None = None, user: User = Depends(current
     if not settings.key_of(name):
         return {"ok": False, "message": "还没填 API Key", "models": []}
 
-    p = get_provider(name) if name == settings.provider else _probe_instance(name)
-    if p is None:
-        return {"ok": False, "message": "该供应商还没配置模型名", "models": []}
+    p = _build_provider(name)
     try:
         models = await p.list_models()
         if not models:
@@ -131,44 +142,39 @@ async def probe_models(provider: str | None = None, user: User = Depends(current
         }
 
 
-def _probe_instance(name: str):
-    """为「非当前供应商」临时构造一个实例来探测。"""
-    from ..services.llm.openai_compat import DeepSeekProvider, TeleAIProvider
-
-    model = settings._slot(name).get("model") or PROVIDERS[name]["default_model"]
-    if not model:
-        return None
-    base = settings._slot(name).get("base_url") or PROVIDERS[name]["base_url"]
-    cls = DeepSeekProvider if name == "deepseek" else TeleAIProvider
-    return cls(api_key=settings.key_of(name), base_url=base, model=model)
-
-
 @router.get("/health")
-async def health(user: User = Depends(current_user)):
-    p = get_provider()
+async def health(provider: str | None = None, user: User = Depends(current_user)):
+    name = provider or settings.provider
+    if name not in PROVIDERS:
+        return {"ok": False, "message": "未知供应商"}
+    p = _build_provider(name)
     info = await p.health()
     return {
-        "provider": settings.provider,
+        "provider": name,
         "provider_name": p.name,
-        "configured": settings.configured,
+        "configured": bool(settings.key_of(name)),
         "secure_storage": settings.key_protected,
         **info,
     }
 
 
 @router.post("/test-chat")
-async def test_chat(user: User = Depends(current_user)):
+async def test_chat(provider: str | None = None, user: User = Depends(current_user)):
     """最小连通性验证。一次真实调用，能验出 Key、base_url、model 三者是否都对。"""
-    p = get_provider()
+    name = provider or settings.provider
+    if name not in PROVIDERS:
+        return {"ok": False, "message": "未知供应商"}
+    p = _build_provider(name)
     try:
         text = await p.chat(
             [{"role": "user", "content": "只回复两个字：联通"}],
             temperature=0.1, max_tokens=64, scene="diagnose",
         )
-        return {"ok": True, "provider": p.name, "model": p.model, "reply": text[:200]}
+        return {"ok": True, "provider": p.name, "model": getattr(p, "model", ""),
+                "reply": text[:200]}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "provider": p.name,
-                "message": scrub(str(exc), settings.api_key)}
+                "message": scrub(str(exc), settings.key_of(name))}
 
 
 @router.get("/memories")

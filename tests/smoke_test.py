@@ -170,14 +170,15 @@ r = c.delete("/api/chat/conversations")
 check("no delete endpoint", r.status_code in (404, 405), f"HTTP {r.status_code}")
 
 print("15. API Key 保密性（核心安全验收）")
+# 用「星辰」这个备用槽位做测试，避免动到用户真实的 DeepSeek Key
 FAKE_KEY = "sk-test1234567890abcdefSECRET9876"
 r = c.post("/api/system/config", json={
-    "provider": "deepseek", "api_key": FAKE_KEY,
-    "model": "deepseek-flash", "base_url": "https://api.deepseek.com/v1",
+    "provider": "teleai", "api_key": FAKE_KEY,
+    "model": "TeleChat-fake", "base_url": "https://ai.ctaigw.cn/v1",
 })
 j = r.json()
 raw = json.dumps(j, ensure_ascii=False)
-check("保存 Key 成功", r.status_code == 200 and j.get("provider") == "deepseek")
+check("保存 Key 成功", r.status_code == 200 and j.get("provider") == "teleai")
 check("保存响应不含明文 Key", FAKE_KEY not in raw)
 check("保存响应只返回掩码", "****" in raw, [p["key_masked"] for p in j["providers"] if p["has_key"]])
 check("加密存储已启用", j.get("secure_storage") is True)
@@ -192,15 +193,41 @@ blob = sec.read_bytes() if sec.exists() else b""
 check("磁盘 secrets.bin 中找不到明文", b"" != blob and FAKE_KEY.encode() not in blob,
       f"{len(blob)} bytes")
 
-r4 = c.post("/api/system/key/clear", json={"provider": "deepseek"})
-cleared = r4.json()
-check("可以一键清除 Key",
-      cleared.get("ok") is True and not any(p["has_key"] for p in cleared["providers"]))
+# 用假 Key 走一次真实调用链：必须返回干净 JSON，而不是 500
+r3 = c.post("/api/system/test-chat", params={"provider": "teleai"})
+try:
+    t = r3.json()
+    ok_json = isinstance(t, dict) and "ok" in t
+except Exception:
+    t, ok_json = {}, False
+check("test-chat 返回合法 JSON（不崩 500）", r3.status_code == 200 and ok_json,
+      f"HTTP {r3.status_code} ok={t.get('ok')}")
+check("假 Key 被服务端拒绝且信息不含明文 Key",
+      t.get("ok") is False and FAKE_KEY not in json.dumps(t, ensure_ascii=False),
+      (t.get("message") or "")[:80])
 
+r_probe = c.get("/api/system/models", params={"provider": "teleai"})
+try:
+    pm = r_probe.json()
+    probe_json = isinstance(pm, dict) and "ok" in pm
+except Exception:
+    pm, probe_json = {}, False
+check("探测模型失败时也是干净 JSON", r_probe.status_code == 200 and probe_json,
+      f"ok={pm.get('ok')}")
+
+r4 = c.post("/api/system/key/clear", json={"provider": "teleai"})
+cleared = r4.json()
+tl = [p for p in cleared.get("providers", []) if p["name"] == "teleai"]
+check("可以一键清除 Key",
+      cleared.get("ok") is True and bool(tl) and tl[0]["has_key"] is False,
+      f"teleai has_key={tl[0]['has_key'] if tl else '?'}")
+
+# 切回 DeepSeek，确认切换逻辑正常、备用槽位清空后不影响主用
+r6 = c.post("/api/system/config", json={"provider": "deepseek"})
+check("可以切回 DeepSeek", r6.json().get("provider") == "deepseek")
 r5 = c.get("/api/system/config")
-cur = [p for p in r5.json()["providers"] if p["name"] == "deepseek"][0]
-check("清除后回到未配置", cur["has_key"] is False and not r5.json()["configured"],
-      f"model={cur['model']} base_url={cur['base_url']}")
+cur = [p for p in r5.json()["providers"] if p["name"] == "teleai"][0]
+check("备用槽位已清空", cur["has_key"] is False)
 
 print("16. 聊过之后，认知风格应该能被推断出来")
 import time as _t
