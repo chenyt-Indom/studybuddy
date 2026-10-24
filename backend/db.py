@@ -62,6 +62,8 @@ def _ensure_columns() -> None:
             "confidence": "FLOAT DEFAULT 0.6",
             "accuracy": "VARCHAR(16) DEFAULT 'unverified'",
             "pinned": "BOOLEAN DEFAULT 0",
+            "superseded": "BOOLEAN DEFAULT 0",
+            "superseded_by": "INTEGER",
             "updated_at": "DATETIME",
             "verified_at": "DATETIME",
         },

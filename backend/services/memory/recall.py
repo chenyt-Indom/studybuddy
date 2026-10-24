@@ -36,8 +36,8 @@ def recall(
 
     scored = []
     for m in rows:
-        # 被用户判定为错的，不再使用
-        if m.accuracy == "wrong":
+        # 被用户判定为错的、已被新事实取代的，都不再使用
+        if m.accuracy == "wrong" or m.superseded:
             continue
         # 科目记忆只取当前科目；全局记忆都参与
         if m.scope == "subject" and subject_key and m.subject_key != subject_key:
@@ -94,7 +94,7 @@ def global_memories(db: Session, user_id: int, limit: int = 8) -> list[dict]:
     rows = db.scalars(
         select(Memory)
         .where(Memory.user_id == user_id, Memory.scope == "global",
-               Memory.accuracy != "wrong")
+               Memory.accuracy != "wrong", Memory.superseded == False)  # noqa: E712
     ).all()
     rows.sort(key=lambda m: (m.pinned, m.weight, m.confidence), reverse=True)
     return [

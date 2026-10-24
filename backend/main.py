@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -40,7 +41,30 @@ async def lifespan(app: FastAPI):
     print(f"  当前模式      : {'真实模型' if settings.configured else '离线演示（未填 AppKey）'}")
     print(f"  打开          : http://127.0.0.1:8787")
     print("=" * 62)
-    yield
+
+    # 记忆自动整理：每小时检查一次，距上次 >=20 小时就整理（等效"每晚整理"）
+    task = asyncio.create_task(_auto_consolidate_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+async def _auto_consolidate_loop() -> None:
+    from .services.memory.consolidate import consolidate_all
+
+    await asyncio.sleep(45)  # 启动后缓一下，别和数据库初始化抢
+    while True:
+        try:
+            done = await consolidate_all(min_hours=20)
+            for r in done:
+                if r.get("ok") and r.get("mode") != "skip":
+                    print(f"[记忆自动整理] user={r.get('user_id', '?')} {r.get('message')}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[记忆自动整理] 失败：{exc}")
+        await asyncio.sleep(3600)
 
 
 app = FastAPI(title="StudyBuddy", version="0.1.0", lifespan=lifespan)

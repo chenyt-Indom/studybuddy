@@ -358,6 +358,46 @@ st1 = c.get("/api/memory/stats").json()
 check("统计接口在增删后仍正常", "total" in st1,
       f"当前 {st1['total']} 条（全局 {st1['global']} / 科目 {st1['subject']}）")
 
+print("21. 记忆档案（综述层）+ 整理 / 手改保护 / 导入 / 重置")
+meta = c.get("/api/memory/meta").json()
+check("meta 有开关字段", "auto_extract" in meta and "auto_consolidate" in meta,
+      f"extract={meta.get('auto_extract')} consolidate={meta.get('auto_consolidate')}")
+
+r = c.post("/api/memory/meta", json={"auto_consolidate": False}).json()
+check("可关闭自动整理", r.get("auto_consolidate") is False)
+c.post("/api/memory/meta", json={"auto_consolidate": True})
+
+# 造两条记忆再整理
+for t in ["E2E：目标考计算机专业", "E2E：晚上九点后有空学习"]:
+    c.post("/api/memory", json={"content": t, "scope": "global", "type": "goal"})
+
+r = c.post("/api/memory/consolidate").json()
+check("整理可执行", r.get("ok") is True, f"mode={r.get('mode')} sections={r.get('sections')}")
+check("整理产出分节", (r.get("sections") or 0) >= 1)
+
+docs = c.get("/api/memory/docs").json()["docs"]
+check("档案有内容", len(docs) >= 1, f"{len(docs)} 节: " + "/".join(d["section"] for d in docs[:4]))
+
+# 手改保护
+d0 = docs[0]
+r = c.put(f"/api/memory/docs/{d0['id']}", json={"content": "E2E 手写内容，不要覆盖"}).json()
+edited = [x for x in r["docs"] if x["id"] == d0["id"]][0]
+check("编辑后标记为手改", edited["user_edited"] is True)
+
+c.post("/api/memory/consolidate")
+after = [x for x in c.get("/api/memory/docs").json()["docs"] if x["id"] == d0["id"]][0]
+check("再次整理不覆盖手改内容", after["content"] == "E2E 手写内容，不要覆盖",
+      after["content"][:30])
+
+# 导入
+r = c.post("/api/memory/import", json={"section": "E2E导入", "text": "这是导入的一段档案"}).json()
+check("可导入档案", r.get("ok") and any(x["section"] == "E2E导入" for x in r["docs"]))
+
+# 重置（只清档案）
+r = c.post("/api/memory/reset", params={"scope": "docs"}).json()
+check("可重置档案", r.get("deleted_docs", 0) >= 1, f"删除 {r.get('deleted_docs')} 节")
+check("重置后档案为空", len(c.get("/api/memory/docs").json()["docs"]) == 0)
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

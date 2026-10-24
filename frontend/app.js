@@ -949,27 +949,62 @@ async function viewProfile(root) {
 }
 
 /* ---------------- 视图：记忆库 ---------------- */
-const MEM_STATE = { scope: 'all', subject: '', accuracy: '', q: '' };
+const MEM_STATE = { scope: 'all', subject: '', accuracy: '', q: '', editing: false };
 
 async function viewMemory(root) {
   root.innerHTML = `
   <div class="page-h">
     <div><h2>记忆库</h2>
-      <div class="desc">全局记忆跨学科通用，科目记忆只在该科生效 · 每条都能核查依据、判定准不准</div></div>
+      <div class="desc">两层：档案综述（给人看）+ 原子记忆（用于召回和核查）· 数据只存在你的设备上</div></div>
     <div class="row" style="gap:8px">
       <button class="btn" id="mPreview">预览会注入什么</button>
-      <button class="btn" id="mAdd">+ 手动添加</button>
     </div>
   </div>
 
-  <div class="grid g4" id="mStats"></div>
-  <div style="height:14px"></div>
+  <div class="card" style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+    <div style="flex:1">
+      <div style="font-weight:600;font-size:14px">对话记忆</div>
+      <div class="hint" style="margin-top:4px">记住对话中的重要信息，让后续回答更贴合你。</div>
+    </div>
+    <label class="switch"><input type="checkbox" id="swExtract"><i></i></label>
+  </div>
+
+  <div class="card" style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+    <div style="flex:1">
+      <div style="font-weight:600;font-size:14px">自动整理</div>
+      <div class="hint" style="margin-top:4px">每晚自动合并重复、更新过时记忆，并重写分节档案。数据仅保存在你的设备上。</div>
+    </div>
+    <label class="switch"><input type="checkbox" id="swConsolidate"><i></i></label>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="row" style="margin-bottom:10px">
+      <h3 style="margin:0">管理记忆</h3>
+      <div class="spacer"></div>
+      <button class="btn" id="mRun">立即整理</button>
+      <button class="btn" id="mEdit">编辑</button>
+      <button class="btn" id="mImport">导入</button>
+      <button class="btn" id="mReset" style="color:#b91c1c;border-color:#f3c6c6">重置</button>
+    </div>
+    <div class="hint" id="lastInfo">每晚自动整理更新，可随时查看和编辑。</div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h3>记忆档案 <span class="tag">按主题合成，模型用它把握整体</span></h3>
+    <div id="docs"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn sm" id="addDoc">+ 新增分节</button>
+      <span class="hint" id="docHint"></span>
+    </div>
+  </div>
 
   <div class="card">
+    <h3>原子记忆 <span class="tag">用于召回与逐条核查</span></h3>
+    <div class="grid g4" id="mStats" style="margin-bottom:14px"></div>
     <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:14px">
       <div class="row" style="gap:4px" id="mScopeTabs">
         <button class="btn sm" data-s="all">全部</button>
-        <button class="btn sm" data-s="global">全局（跨学科）</button>
+        <button class="btn sm" data-s="global">全局</button>
         <button class="btn sm" data-s="subject">分科目</button>
       </div>
       <select id="mSubject" style="width:auto">
@@ -982,7 +1017,7 @@ async function viewMemory(root) {
         <option value="correct">我判定：准确</option>
         <option value="wrong">我判定：不准确</option>
       </select>
-      <input id="mQ" type="text" placeholder="搜索内容…" style="width:180px" />
+      <input id="mQ" type="text" placeholder="搜索内容…" style="width:160px" />
       <div class="spacer"></div>
       <button class="btn sm ghost" id="mClean" style="color:#b91c1c">清理所有「不准确」</button>
     </div>
@@ -991,34 +1026,124 @@ async function viewMemory(root) {
 
   <div id="mDialog"></div>`;
 
-  // ---------- 统计 ----------
+  // ============ 开关 ============
+  const loadMeta = async () => {
+    try {
+      const m = await api.get('/api/memory/meta');
+      if (!$('#swExtract')) return;
+      $('#swExtract').checked = m.auto_extract;
+      $('#swConsolidate').checked = m.auto_consolidate;
+      $('#lastInfo').innerHTML = m.last_consolidated_at
+        ? `上次整理：${h(m.last_consolidated_at.replace('T', ' ').slice(0, 16))}`
+          + ` · 累计整理 ${m.consolidate_count} 次`
+          + (m.last_summary ? `<br><span style="color:#8d97a8">${h(m.last_summary)}</span>` : '')
+          + '<br>每晚自动整理更新，可随时查看和编辑。'
+        : '还没整理过。点「立即整理」现在跑一次，或等今晚自动整理。';
+    } catch (e) { toast(e.message, true); }
+  };
+
+  $('#swExtract').onchange = async () => {
+    try {
+      await api.post('/api/memory/meta', { auto_extract: $('#swExtract').checked });
+      toast($('#swExtract').checked ? '已开启对话记忆' : '已关闭对话记忆');
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#swConsolidate').onchange = async () => {
+    try {
+      await api.post('/api/memory/meta', { auto_consolidate: $('#swConsolidate').checked });
+      toast($('#swConsolidate').checked ? '已开启自动整理' : '已关闭自动整理');
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // ============ 统计 ============
   const renderStats = (s) => {
     let rate, note;
     if (s.accuracy_rate === null) {
       rate = '<span class="hint" style="font-size:15px">尚未判定</span>';
-      note = '点下面的「准确 / 不准确」开始核查';
+      note = '点下面「准确/不准确」开始核查';
     } else if (s.judged < 3) {
       rate = `<span>${(s.accuracy_rate * 100).toFixed(0)}%</span>`;
-      note = `样本只有 ${s.judged} 条，参考价值有限`;
+      note = `样本 ${s.judged} 条，参考价值有限`;
     } else {
       const c = s.accuracy_rate >= 0.8 ? '#16a34a' : s.accuracy_rate >= 0.6 ? '#f59e0b' : '#dc2626';
       rate = `<span style="color:${c}">${(s.accuracy_rate * 100).toFixed(0)}%</span>`;
       note = `对 ${s.correct} / 错 ${s.wrong}`;
     }
     $('#mStats').innerHTML = `
-      <div class="card"><div class="hint">记忆总数</div>
-        <div class="stat" style="margin:6px 0 2px">${s.total}<small>全局 ${s.global} · 科目 ${s.subject}</small></div></div>
-      <div class="card"><div class="hint">你判定过</div>
-        <div class="stat" style="margin:6px 0 2px">${s.judged}<small>未判定 ${s.unverified}</small></div></div>
-      <div class="card"><div class="hint">准确率</div>
-        <div class="stat" style="margin:6px 0 2px">${rate}<small>${note}</small></div></div>
-      <div class="card"><div class="hint">这条规则的效力</div>
-        <div class="hint" style="margin-top:8px;line-height:1.7">
-          判「不准确」→ <b>立即停止使用</b>，不再进 Prompt</div></div>`;
+      <div><div class="hint">有效记忆</div>
+        <div class="stat" style="font-size:20px">${s.total}<small>全局 ${s.global} · 科目 ${s.subject}</small></div></div>
+      <div><div class="hint">你判定过</div>
+        <div class="stat" style="font-size:20px">${s.judged}<small>未判定 ${s.unverified}</small></div></div>
+      <div><div class="hint">准确率</div>
+        <div class="stat" style="font-size:20px">${rate}<small>${note}</small></div></div>
+      <div><div class="hint">已归档</div>
+        <div class="stat" style="font-size:20px">${s.superseded || 0}<small>被新事实取代</small></div></div>`;
   };
 
-  // ---------- 列表 ----------
-  const load = async () => {
+  // ============ 档案（综述） ============
+  const renderDocs = (docs) => {
+    if (!docs.length) {
+      $('#docs').innerHTML = `<div class="empty">还没有档案。聊几轮后点「立即整理」，系统会把记忆合成一份分节档案。<br>
+        也可以点下面「+ 新增分节」自己写。</div>`;
+      return;
+    }
+    $('#docs').innerHTML = docs.map(d => `
+      <div class="doc" data-id="${d.id}" data-section="${h(d.section)}">
+        <div class="doc-head">
+          <span class="doc-title">${h(d.section)}</span>
+          <span class="pill" style="font-size:10.5px">v${d.version}</span>
+          ${d.user_edited ? '<span class="pill ok" style="font-size:10.5px">你手改过</span>' : ''}
+          <div class="spacer"></div>
+          <button class="btn sm ghost" data-act="ed">编辑</button>
+          <button class="btn sm ghost" data-act="del" style="color:#b91c1c">删</button>
+        </div>
+        <div class="doc-body">${h(d.content).replace(/\n/g, '<br>')}</div>
+      </div>`).join('');
+
+    $$('#docs .doc').forEach(el => {
+      const id = el.dataset.id;
+      const sec = el.dataset.section;
+      el.querySelector('[data-act="ed"]').onclick = () => {
+        if (el.querySelector('textarea')) return;
+        const body = el.querySelector('.doc-body');
+        const raw = body.innerHTML.replace(/<br>/g, '\n').replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+        body.innerHTML = `<textarea style="min-height:140px">${h(raw)}</textarea>
+          <div class="row" style="margin-top:8px">
+            <button class="btn sm primary" data-a="save">保存</button>
+            <button class="btn sm ghost" data-a="cancel">取消</button>
+            <span class="hint">手改后，自动整理不会再覆盖这一节</span>
+          </div>`;
+        body.querySelector('[data-a="save"]').onclick = async () => {
+          try {
+            await api.put(`/api/memory/docs/${id}`, { content: body.querySelector('textarea').value });
+            toast('已保存');
+            loadDocs();
+          } catch (e) { toast(e.message, true); }
+        };
+        body.querySelector('[data-a="cancel"]').onclick = () => loadDocs();
+      };
+      el.querySelector('[data-act="del"]').onclick = async () => {
+        if (!confirm(`删除分节「${sec}」？`)) return;
+        try { await api.del(`/api/memory/docs/${id}`); loadDocs(); }
+        catch (e) { toast(e.message, true); }
+      };
+    });
+  };
+
+  const loadDocs = async () => {
+    try {
+      const r = await api.get('/api/memory/docs');
+      if (!$('#docs')) return;
+      renderDocs(r.docs || []);
+      $('#docHint').textContent = r.docs && r.docs.length
+        ? `共 ${r.docs.length} 节 · 只有标了「你手改过」的不会被自动覆盖`
+        : '';
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // ============ 原子记忆 ============
+  const loadList = async () => {
     const p = new URLSearchParams();
     if (MEM_STATE.scope !== 'all') p.set('scope', MEM_STATE.scope);
     if (MEM_STATE.subject) p.set('subject', MEM_STATE.subject);
@@ -1037,8 +1162,8 @@ async function viewMemory(root) {
 
   const renderList = (items) => {
     if (!items.length) {
-      $('#mList').innerHTML = `<div class="empty">这里还没有记忆<br>
-        去「学科对话」聊几轮，系统会自动提取；或者点右上角「+ 手动添加」</div>`;
+      $('#mList').innerHTML = `<div class="empty">这里还没有原子记忆<br>
+        去「学科对话」聊几轮会自动提取，或点上面的「+ 新增分节」手写档案</div>`;
       return;
     }
     $('#mList').innerHTML = items.map(m => `
@@ -1049,152 +1174,141 @@ async function viewMemory(root) {
           ${m.pinned ? '<span class="pill warn">置顶</span>' : ''}
           ${m.accuracy === 'correct' ? '<span class="pill ok">你判定：准确</span>' : ''}
           ${m.accuracy === 'wrong' ? '<span class="pill bad">你判定：不准确</span>' : ''}
-          <span class="mem-meta">置信度 ${(m.confidence * 100).toFixed(0)}% · 权重 ${m.weight} · 命中 ${m.hits} 次</span>
+          <span class="mem-meta">置信 ${(m.confidence * 100).toFixed(0)}% · 权重 ${m.weight} · 命中 ${m.hits}</span>
           <div class="spacer"></div>
           <button class="btn sm" data-act="ok">准确</button>
           <button class="btn sm" data-act="no">不准确</button>
           <button class="btn sm ghost" data-act="pin">${m.pinned ? '取消置顶' : '置顶'}</button>
-          <button class="btn sm ghost" data-act="edit">编辑</button>
           <button class="btn sm ghost" data-act="del" style="color:#b91c1c">删</button>
         </div>
         <div class="mem-body">${h(m.content)}</div>
         ${m.evidence ? `<div class="mem-ev">依据原话：「${h(m.evidence)}」</div>`
-          : '<div class="mem-ev" style="color:#b45309">⚠️ 这条没有依据片段，建议你核实一下</div>'}
+          : '<div class="mem-ev" style="color:#b45309">⚠️ 这条没有依据片段，建议核实</div>'}
       </div>`).join('');
 
     $$('#mList .mem').forEach(el => {
       const id = el.dataset.id;
-      const act = (a) => el.querySelector(`[data-act="${a}"]`);
-      act('ok').onclick = () => verify(id, 'correct');
-      act('no').onclick = () => verify(id, 'wrong');
-      act('pin').onclick = () => patch(id, { pinned: el.dataset.pinned !== '1' });
-      act('edit').onclick = () => openEdit(id);
-      act('del').onclick = () => del(id);
+      el.querySelector('[data-act="ok"]').onclick = () => verify(id, 'correct');
+      el.querySelector('[data-act="no"]').onclick = () => verify(id, 'wrong');
+      el.querySelector('[data-act="pin"]').onclick = () => patch(id, { pinned: el.dataset.pinned !== '1' });
+      el.querySelector('[data-act="del"]').onclick = async () => {
+        if (!confirm('删除这条记忆？')) return;
+        try { await api.del(`/api/memory/${id}`); toast('已删除'); loadList(); }
+        catch (e) { toast(e.message, true); }
+      };
     });
   };
 
   const verify = async (id, accuracy) => {
     try {
       await api.post(`/api/memory/${id}/verify`, { accuracy });
-      toast(accuracy === 'correct' ? '已标为准确（以后会优先使用）' : '已标为不准确（以后不再使用）');
-      load();
+      toast(accuracy === 'correct' ? '已标为准确' : '已标为不准确（不再使用）');
+      loadList();
+    } catch (e) { toast(e.message, true); }
+  };
+  const patch = async (id, body) => {
+    try { await api.put(`/api/memory/${id}`, body); loadList(); }
+    catch (e) { toast(e.message, true); }
+  };
+
+  // ============ 管理按钮 ============
+  $('#mRun').onclick = async () => {
+    const btn = $('#mRun');
+    btn.disabled = true; btn.textContent = '整理中…';
+    try {
+      const r = await api.post('/api/memory/consolidate');
+      toast(r.message || '整理完成');
+      if (r.skipped_user_edited && r.skipped_user_edited.length) {
+        toast(`保留了 ${r.skipped_user_edited.length} 节你手改过的内容`);
+      }
+      await Promise.all([loadMeta(), loadDocs(), loadList()]);
+    } catch (e) { toast(e.message, true); }
+    finally { btn.disabled = false; btn.textContent = '立即整理'; }
+  };
+
+  $('#mReset').onclick = async () => {
+    if (!confirm('重置会清空所有原子记忆和档案，且无法恢复。确定？')) return;
+    if (!confirm('再确认一次：真的要全部清空吗？')) return;
+    try {
+      const r = await api.post('/api/memory/reset?scope=all');
+      toast(`已清空：原子记忆 ${r.deleted_memories} 条、档案 ${r.deleted_docs} 节`);
+      await Promise.all([loadMeta(), loadDocs(), loadList()]);
     } catch (e) { toast(e.message, true); }
   };
 
-  const patch = async (id, body) => {
-    try { await api.put(`/api/memory/${id}`, body); load(); }
-    catch (e) { toast(e.message, true); }
+  $('#mEdit').onclick = () => {
+    const first = $('#docs .doc [data-act="ed"]');
+    if (!first) return toast('先有档案才能编辑', true);
+    $$('#docs .doc [data-act="ed"]').forEach(b => {
+      if (!b.closest('.doc').querySelector('textarea')) b.click();
+    });
+    toast('已进入编辑模式，改完点各节的「保存」');
   };
 
-  const del = async (id) => {
-    if (!confirm('确定删除这条记忆？')) return;
-    try { await api.del(`/api/memory/${id}`); toast('已删除'); load(); }
-    catch (e) { toast(e.message, true); }
-  };
-
-  const openEdit = async (id) => {
-    const r = await api.get('/api/memory?scope=all');
-    const m = (r.items || []).find(x => String(x.id) === String(id));
-    if (!m) return;
+  $('#mImport').onclick = () => {
     $('#mDialog').innerHTML = `<div class="card" style="margin-top:16px">
-      <h3>编辑记忆 #${m.id}</h3>
-      <div class="field"><label>内容</label><textarea id="eContent">${h(m.content)}</textarea></div>
+      <h3>导入档案</h3>
+      <p class="hint">把现成的一段自我介绍 / 学习情况贴进来。导入的内容不会被自动整理改写。</p>
+      <div class="field"><label>分节名称</label>
+        <input id="impSec" type="text" value="导入的档案" /></div>
       <div style="height:10px"></div>
-      <div class="grid g3">
-        <div class="field"><label>类型</label><select id="eType">
-          ${Object.entries({ identity: '身份', goal: '目标', habit: '习惯', preference: '偏好',
-            emotion: '情绪', weakness: '薄弱', misconception: '误区', observation: '观察' })
-            .map(([k, v]) => `<option value="${k}" ${k === m.type ? 'selected' : ''}>${v}</option>`).join('')}
-        </select></div>
-        <div class="field"><label>层级</label><select id="eScope">
-          <option value="global" ${m.scope === 'global' ? 'selected' : ''}>全局（跨学科）</option>
-          <option value="subject" ${m.scope === 'subject' ? 'selected' : ''}>分科目</option>
-        </select></div>
-        <div class="field"><label>科目（仅分科目时需要）</label><select id="eSubject">
-          <option value="">—</option>
-          ${SUBJECTS.map(([k, n]) => `<option value="${k}" ${k === m.subject ? 'selected' : ''}>${n}</option>`).join('')}
-        </select></div>
-      </div>
-      <div style="height:10px"></div>
-      <div class="field"><label>依据（原话片段，可留空）</label><input id="eEv" type="text" value="${h(m.evidence || '')}" /></div>
+      <div class="field"><label>内容</label>
+        <textarea id="impText" style="min-height:180px" placeholder="粘贴你的学习背景、目标、习惯……"></textarea></div>
       <div style="height:14px"></div>
-      <div class="row"><button class="btn primary" id="eSave">保存</button>
-        <button class="btn ghost" id="eCancel">取消</button></div>
+      <div class="row"><button class="btn primary" id="impGo">导入</button>
+        <button class="btn ghost" id="impCancel">取消</button></div>
     </div>`;
-    $('#eCancel').onclick = () => { $('#mDialog').innerHTML = ''; };
-    $('#eSave').onclick = async () => {
+    $('#impCancel').onclick = () => { $('#mDialog').innerHTML = ''; };
+    $('#impGo').onclick = async () => {
+      const text = $('#impText').value.trim();
+      if (!text) return toast('内容为空', true);
       try {
-        await api.put(`/api/memory/${id}`, {
-          content: $('#eContent').value.trim(),
-          type: $('#eType').value,
-          scope: $('#eScope').value,
-          subject_key: $('#eSubject').value || null,
-          evidence: $('#eEv').value.trim()
-        });
+        await api.post('/api/memory/import', { text, section: $('#impSec').value.trim() || '导入的档案' });
         $('#mDialog').innerHTML = '';
-        toast('已保存');
-        load();
+        toast('已导入');
+        loadDocs();
       } catch (e) { toast(e.message, true); }
     };
   };
 
-  // ---------- 手动添加 ----------
-  $('#mAdd').onclick = () => {
+  $('#addDoc').onclick = () => {
     $('#mDialog').innerHTML = `<div class="card" style="margin-top:16px">
-      <h3>手动添加一条记忆</h3>
-      <p class="hint">手填的默认置信度 100%，会被优先采用，也不会随时间衰减。</p>
-      <div class="field"><label>内容（一句话，不超过 40 字最好）</label>
-        <textarea id="nContent" placeholder="例如：我晚上 8 点后注意力最好"></textarea></div>
+      <h3>新增分节</h3>
+      <div class="field"><label>分节名称</label>
+        <input id="ndSec" type="text" placeholder="例如：我的弱项、作息安排" /></div>
       <div style="height:10px"></div>
-      <div class="grid g3">
-        <div class="field"><label>层级</label><select id="nScope">
-          <option value="global">全局（跨学科）</option><option value="subject">分科目</option>
-        </select></div>
-        <div class="field"><label>科目</label><select id="nSubject">
-          <option value="">—</option>
-          ${SUBJECTS.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}
-        </select></div>
-        <div class="field"><label>类型</label><select id="nType">
-          ${Object.entries({ identity: '身份', goal: '目标', habit: '习惯', preference: '偏好',
-            emotion: '情绪', weakness: '薄弱', misconception: '误区', observation: '观察' })
-            .map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
-        </select></div>
-      </div>
+      <div class="field"><label>内容</label>
+        <textarea id="ndText" style="min-height:120px"></textarea></div>
       <div style="height:14px"></div>
-      <div class="row"><button class="btn primary" id="nSave">添加</button>
-        <button class="btn ghost" id="nCancel">取消</button></div>
+      <div class="row"><button class="btn primary" id="ndGo">添加</button>
+        <button class="btn ghost" id="ndCancel">取消</button></div>
     </div>`;
-    $('#nCancel').onclick = () => { $('#mDialog').innerHTML = ''; };
-    $('#nSave').onclick = async () => {
-      const content = $('#nContent').value.trim();
-      if (!content) return toast('内容不能为空', true);
+    $('#ndCancel').onclick = () => { $('#mDialog').innerHTML = ''; };
+    $('#ndGo').onclick = async () => {
+      const sec = $('#ndSec').value.trim(), content = $('#ndText').value.trim();
+      if (!sec || !content) return toast('名称和内容都要填', true);
       try {
-        const r = await api.post('/api/memory', {
-          content, scope: $('#nScope').value,
-          subject_key: $('#nSubject').value || null,
-          type: $('#nType').value, pinned: true
-        });
-        if (r.ok === false) return toast(r.message, true);
+        await api.post('/api/memory/docs', { section: sec, content });
         $('#mDialog').innerHTML = '';
-        toast('已添加并置顶');
-        load();
+        toast('已添加');
+        loadDocs();
       } catch (e) { toast(e.message, true); }
     };
   };
 
-  // ---------- 预览注入 ----------
+  // ============ 预览 / 清理 / 筛选 ============
   $('#mPreview').onclick = async () => {
     const subj = $('#mSubject').value || state.subject;
     const q = $('#mQ').value.trim() || '二次函数怎么求';
     try {
       const r = await api.get(`/api/memory/preview?subject=${encodeURIComponent(subj)}&query=${encodeURIComponent(q)}`);
       const box = (list) => list.length
-        ? list.map(m => `<div class="mem-ev" style="margin:4px 0">· [${h(m.type_cn)}] ${h(m.content)}
-            <span class="pill" style="margin-left:6px">置信 ${(m.confidence * 100).toFixed(0)}%</span></div>`).join('')
+        ? list.map(m => `<div class="mem-ev" style="margin:4px 0">· [${h(m.type_cn)}] ${h(m.content)}</div>`).join('')
         : '<div class="hint">（无）</div>';
       $('#mDialog').innerHTML = `<div class="card" style="margin-top:16px">
-        <h3>这次对话会注入 ${r.count} 条记忆</h3>
-        <p class="hint">模拟问题：「${h(r.query)}」 · 科目：${h(SUBJ_NAME[r.subject] || r.subject)}</p>
+        <h3>这次对话会注入 ${r.count} 条原子记忆</h3>
+        <p class="hint">模拟问题：「${h(r.query)}」 · 科目：${h(SUBJ_NAME[r.subject] || r.subject)}　
+          （另外还会注入档案综述与全局记忆）</p>
         <div style="height:10px"></div>
         <h5 class="hint">全局记忆（${r.global.length}）</h5>${box(r.global)}
         <div style="height:10px"></div>
@@ -1204,37 +1318,35 @@ async function viewMemory(root) {
     } catch (e) { toast(e.message, true); }
   };
 
-  // ---------- 清理 ----------
   $('#mClean').onclick = async () => {
     if (!confirm('将删除所有你判定为「不准确」的记忆，确定？')) return;
     try {
       const r = await api.post('/api/memory/cleanup');
       toast(`已清理 ${r.deleted} 条`);
-      load();
+      loadList();
     } catch (e) { toast(e.message, true); }
   };
 
-  // ---------- 筛选交互 ----------
   $$('#mScopeTabs .btn').forEach(b => {
     if (b.dataset.s === MEM_STATE.scope) b.classList.add('primary');
     b.onclick = () => {
       MEM_STATE.scope = b.dataset.s;
       $$('#mScopeTabs .btn').forEach(x => x.classList.toggle('primary', x.dataset.s === MEM_STATE.scope));
-      load();
+      loadList();
     };
   });
   $('#mSubject').value = MEM_STATE.subject;
-  $('#mSubject').onchange = () => { MEM_STATE.subject = $('#mSubject').value; load(); };
+  $('#mSubject').onchange = () => { MEM_STATE.subject = $('#mSubject').value; loadList(); };
   $('#mAccuracy').value = MEM_STATE.accuracy;
-  $('#mAccuracy').onchange = () => { MEM_STATE.accuracy = $('#mAccuracy').value; load(); };
+  $('#mAccuracy').onchange = () => { MEM_STATE.accuracy = $('#mAccuracy').value; loadList(); };
   $('#mQ').value = MEM_STATE.q;
   $('#mQ').oninput = () => {
     MEM_STATE.q = $('#mQ').value.trim();
     clearTimeout(state._memT);
-    state._memT = setTimeout(load, 250);
+    state._memT = setTimeout(loadList, 250);
   };
 
-  await load();
+  await Promise.all([loadMeta(), loadDocs(), loadList()]);
 }
 
 /* ---------------- 视图：设置 ---------------- */

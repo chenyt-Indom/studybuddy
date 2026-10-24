@@ -100,7 +100,7 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   // 逐个视图渲染
   for (const [key, mustHave] of [
     ['dashboard', '学情看板'], ['review', '复习中心'], ['mistakes', '错题本'],
-    ['insight', '洞察'], ['memory', '记忆库'], ['profile', '学习档案'],
+    ['insight', '洞察'], ['memory', '自动整理'], ['profile', '学习档案'],
     ['settings', '选择供应商']
   ]) {
     const link = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === key);
@@ -148,8 +148,6 @@ async function waitFor(fn, timeout = 8000, step = 120) {
           `点击前 hidden=${wasHidden}，点击后 hidden=${thinkBody.hidden}`);
     think.querySelector('.think-head').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   }
-  check('联网开关存在', !!doc.querySelector('#webMode'),
-        doc.querySelector('#webMode') ? doc.querySelector('#webMode').value : '');
 
   const ctxHtml = doc.querySelector('#ctx').textContent;
   check('右侧上下文面板更新', ctxHtml.includes('认知风格'), ctxHtml.slice(0, 40).replace(/\s+/g, ' '));
@@ -159,6 +157,24 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   dashLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const hasSvg = await waitFor(() => doc.querySelectorAll('#main svg').length >= 1, 9000);
   check('图表渲染为 SVG', hasSvg, `${doc.querySelectorAll('#main svg').length} 个`);
+
+  // 记忆库页：开关 + 管理按钮 + 档案区
+  const memLink = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'memory');
+  memLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const memOk = await waitFor(() => doc.querySelector('#swExtract') && doc.querySelector('#mRun'), 9000);
+  check('记忆库有对话记忆开关', memOk && !!doc.querySelector('#swExtract'));
+  check('记忆库有自动整理开关', !!doc.querySelector('#swConsolidate'));
+  check('记忆库有管理按钮(整理/编辑/导入/重置)',
+        !!doc.querySelector('#mRun') && !!doc.querySelector('#mEdit') &&
+        !!doc.querySelector('#mImport') && !!doc.querySelector('#mReset'));
+  check('记忆库有档案区', !!doc.querySelector('#docs'));
+
+  // 回到对话页再检查联网开关
+  const backChat = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'chat');
+  backChat.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await waitFor(() => doc.querySelector('#webMode'), 9000);
+  check('联网开关存在', !!doc.querySelector('#webMode'),
+        doc.querySelector('#webMode') ? doc.querySelector('#webMode').value : '');
 
   const errs = window.__errs || [];
   check('无未捕获 JS 错误', errs.length === 0, errs.slice(0, 3).join(' | '));

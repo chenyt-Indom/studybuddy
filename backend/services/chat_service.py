@@ -20,6 +20,7 @@ from .forgetting.scheduler import check_review_in_chat, ensure_review_state
 from .kp import candidates, match_kp_codes
 from .llm import get_provider
 from .memory.extractor import extract_memories, persist_memories
+from .memory.consolidate import build_doc_context, get_meta
 from .memory.recall import global_memories, recall
 from .memory.store import decay_all
 from .pattern.miner import list_insights
@@ -87,6 +88,8 @@ def build_context(db, user_id: int, subject_key: str, user_text: str) -> dict:
         extra={"memories": mems, "patterns": patterns, "cross_subject": cs},
     )
     ctx["kp_hint"] = kp_codes
+    # 记忆综述（档案层）：比逐条记忆更省 token，也更能体现"整体理解"
+    ctx["profile_docs"] = build_doc_context(db, user_id)
     return ctx
 
 
@@ -250,6 +253,9 @@ async def _post_process(
 ) -> None:
     """异步后处理管道。失败不影响主流程。"""
     try:
+        with session_scope() as db0:
+            if not get_meta(db0, user_id).auto_extract:
+                return  # 用户关掉了「对话记忆」
         dialogue = f"学生：{user_text[:600]}\n老师：{answer[:1200]}"
         items = await extract_memories(dialogue, subject_key)
 

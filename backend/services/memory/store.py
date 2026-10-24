@@ -128,14 +128,16 @@ def stats(db: Session, user_id: int) -> dict:
     """记忆库准确度统计 —— 供「透明可核查」页面用。"""
     rows = db.scalars(select(Memory).where(Memory.user_id == user_id)).all()
     total = len(rows)
-    g = sum(1 for m in rows if m.scope == "global")
-    correct = sum(1 for m in rows if m.accuracy == "correct")
-    wrong = sum(1 for m in rows if m.accuracy == "wrong")
-    unverified = total - correct - wrong
+    active = [m for m in rows if not m.superseded]
+    superseded = total - len(active)
+    g = sum(1 for m in active if m.scope == "global")
+    correct = sum(1 for m in active if m.accuracy == "correct")
+    wrong = sum(1 for m in active if m.accuracy == "wrong")
+    unverified = len(active) - correct - wrong
     judged = correct + wrong
 
     by_subject: dict[str, dict] = {}
-    for m in rows:
+    for m in active:
         if m.scope != "subject" or not m.subject_key:
             continue
         d = by_subject.setdefault(m.subject_key, {"total": 0, "correct": 0, "wrong": 0})
@@ -146,9 +148,11 @@ def stats(db: Session, user_id: int) -> dict:
             d["wrong"] += 1
 
     return {
-        "total": total,
+        "total": len(active),
+        "all_records": total,
+        "superseded": superseded,
         "global": g,
-        "subject": total - g,
+        "subject": len(active) - g,
         "correct": correct,
         "wrong": wrong,
         "unverified": unverified,

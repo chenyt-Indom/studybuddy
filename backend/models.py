@@ -281,11 +281,55 @@ class Memory(Base):
     # 用户判定：unverified / correct / wrong
     accuracy: Mapped[str] = mapped_column(String(16), default="unverified")
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 被新事实取代（归档但不删，便于回溯）
+    superseded: Mapped[bool] = mapped_column(Boolean, default=False)
+    superseded_by: Mapped[int | None] = mapped_column(Integer, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+
+
+class MemoryDoc(Base):
+    """记忆档案（综述层）——按主题合成的大段文本，用户可直接编辑。
+
+    和 Memory 的关系：
+      Memory     = 原子事实（一条条，用于召回、带依据、可核查）
+      MemoryDoc  = 整理后的综述（分节长文，给人看的、也给模型当高层背景）
+
+    为什么要两层：截图那种「工作背景」一大段，没法逐条核查；而纯卡片又读不出全貌。
+    两层各司其职：卡片负责准确，综述负责整体理解。
+    """
+
+    __tablename__ = "memory_docs"
+    __table_args__ = (Index("idx_doc_user", "user_id", "order_index"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    section: Mapped[str] = mapped_column(String(64), default="学习背景")
+    content: Mapped[str] = mapped_column(Text, default="")
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    auto_generated: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 用户手动编辑过的，自动整理不再覆盖（避免把用户改的字冲掉）
+    user_edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+class MemoryMeta(Base):
+    """记忆系统的用户级设置与状态。"""
+
+    __tablename__ = "memory_meta"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    # 对话记忆：是否自动从对话里提取
+    auto_extract: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 自动整理：每晚合并/更新记忆并重写综述
+    auto_consolidate: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_consolidated_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    consolidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_summary: Mapped[str | None] = mapped_column(Text, default=None)
 
 
 class PatternInsight(Base):

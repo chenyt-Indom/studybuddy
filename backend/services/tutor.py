@@ -44,6 +44,14 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
     # ① 时间感知：放最前面，模型对开头最敏感
     parts.append(ctx.get("time_line") or _default_time_line())
 
+    # ①b 学习档案（综述层）：整体背景，比单条记忆更像"了解这个人"
+    docs = ctx.get("profile_docs")
+    if docs:
+        parts.append(
+            "【学习档案】以下是长期积累的档案综述，用于把握整体情况，"
+            "**不要整段复述给用户**，只在讲法、举例、难度上体现。\n\n" + docs
+        )
+
     # ② 认知风格 → 讲解方式
     style = ctx.get("primary_style")
     if style and STYLE_HINT.get(style):
