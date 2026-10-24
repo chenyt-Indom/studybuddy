@@ -95,12 +95,12 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   check('进入主界面（boot 成功）', booted);
 
   const navs = Array.from(doc.querySelectorAll('.side nav a')).map(a => a.textContent.trim());
-  check('侧边栏导航', navs.length === 8, navs.join(' / '));
+  check('侧边栏导航', navs.length === 9, navs.join(' / '));
 
   // 逐个视图渲染
   for (const [key, mustHave] of [
     ['dashboard', '学情看板'], ['review', '复习中心'], ['mistakes', '错题本'],
-    ['insight', '洞察'], ['memory', '自动整理'], ['profile', '学习档案'],
+    ['insight', '洞察'], ['memory', '自动整理'], ['textbook', '教材'], ['profile', '学习档案'],
     ['settings', '选择供应商']
   ]) {
     const link = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === key);
@@ -168,6 +168,20 @@ async function waitFor(fn, timeout = 8000, step = 120) {
         !!doc.querySelector('#mRun') && !!doc.querySelector('#mEdit') &&
         !!doc.querySelector('#mImport') && !!doc.querySelector('#mReset'));
   check('记忆库有档案区', !!doc.querySelector('#docs'));
+
+  // 教材页：版本选择 + 最新核查
+  const tbLink = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'textbook');
+  tbLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const tbOk = await waitFor(() => doc.querySelector('#tbEditions'), 12000);
+  check('教材页有版本区', tbOk);
+  const edLoaded = await waitFor(() =>
+    doc.querySelector('#tbEditions').textContent.includes('人教A版'), 12000);
+  const edHtml = doc.querySelector('#tbEditions').textContent;
+  check('版本列表已渲染', edLoaded, edHtml.slice(0, 46).replace(/\s+/g, ' '));
+  check('有当前教材与最新核查区',
+        !!doc.querySelector('#tbCur') && !!doc.querySelector('#tbLatest'));
+  await waitFor(() => doc.querySelector('#tbCheck'), 12000);
+  check('有「检查是否最新」按钮', !!doc.querySelector('#tbCheck'));
 
   // 回到对话页再检查联网开关
   const backChat = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'chat');

@@ -52,6 +52,17 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
             "**不要整段复述给用户**，只在讲法、举例、难度上体现。\n\n" + docs
         )
 
+    # ①c 教材定位：对齐课本章节，顺序和符号约定才对得上
+    tb = ctx.get("textbook")
+    if tb and tb.get("text") and tb.get("matched"):
+        vols = "、".join(tb.get("volumes") or [tb.get("volume") or ""])
+        parts.append(
+            f"【教材定位】学生用的是《{tb['textbook']}》（{vols}）。\n"
+            f"与本次问题相关的章节：\n{tb['text']}\n"
+            "讲解时请**沿用该教材的章节顺序、术语和符号约定**，"
+            "必要时说明「这在你课本的哪一册哪一节」。不要整段照抄教材原文。"
+        )
+
     # ② 认知风格 → 讲解方式
     style = ctx.get("primary_style")
     if style and STYLE_HINT.get(style):

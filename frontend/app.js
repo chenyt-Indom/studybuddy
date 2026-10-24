@@ -25,6 +25,7 @@ const NAV = [
   ['mistakes', '错题本', '📕'],
   ['insight', '洞察', '💡'],
   ['memory', '记忆库', '🧠'],
+  ['textbook', '教材', '📚'],
   ['profile', '学习档案', '👤'],
   ['settings', '设置', '⚙️']
 ];
@@ -180,8 +181,8 @@ function route() {
   const m = $('#main');
   m.innerHTML = '';
   ({ chat: viewChat, dashboard: viewDashboard, review: viewReview, mistakes: viewMistakes,
-     insight: viewInsight, memory: viewMemory, profile: viewProfile,
-     settings: viewSettings }[state.view] || viewChat)(m);
+     insight: viewInsight, memory: viewMemory, textbook: viewTextbook,
+     profile: viewProfile, settings: viewSettings }[state.view] || viewChat)(m);
 }
 
 /* ---------------- 视图：对话 ---------------- */
@@ -1347,6 +1348,299 @@ async function viewMemory(root) {
   };
 
   await Promise.all([loadMeta(), loadDocs(), loadList()]);
+}
+
+/* ---------------- 视图：教材 ---------------- */
+const TB_STATE = { subject: 'math', stage: 'senior', openId: null, edition: '' };
+
+async function viewTextbook(root) {
+  root.innerHTML = `
+  <div class="page-h">
+    <div><h2>教材</h2>
+      <div class="desc">先选版本，再确认是不是最新 · 讲解按课本章节顺序与符号约定</div></div>
+    <div class="row" style="gap:8px">
+      <select id="tbStage" style="width:auto">
+        <option value="senior">高中</option>
+        <option value="junior">初中</option>
+      </select>
+      <select id="tbSubject" style="width:auto">
+        ${SUBJECTS.map(([k, n]) => `<option value="${k}" ${k === TB_STATE.subject ? 'selected' : ''}>${n}</option>`).join('')}
+      </select>
+      <button class="btn" id="tbMatch">定位预览</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h3>① 选择教材版本 <span class="tag">不同版本章节顺序不同，选错就白搭</span></h3>
+    <div id="tbEditions"></div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h3>② 当前使用 <span class="tag" id="tbCur"></span></h3>
+    <div id="tbLatest"></div>
+  </div>
+
+  <div class="grid g2" style="margin-bottom:16px">
+    <div class="card">
+      <h3>导入自己的教材 <span class="tag">PDF / TXT / MD</span></h3>
+      <p class="hint" style="margin:0 0 12px">
+        没有内置目录的版本，用自己手上的正版教材导入。<b>文件只存本机</b>
+        <span class="mono">data/textbooks/</span>，不上传、不进 Git。
+      </p>
+      <div class="field"><label>文件</label>
+        <input id="tbFile" type="file" accept=".pdf,.txt,.md" /></div>
+      <div style="height:10px"></div>
+      <div class="grid g2">
+        <div class="field"><label>版本名</label>
+          <input id="tbEdName" type="text" placeholder="例如：北师大版" /></div>
+        <div class="field"><label>修订年份</label>
+          <input id="tbEdYear" type="number" placeholder="例如：2019" /></div>
+        <div class="field"><label>册次</label>
+          <input id="tbVolume" type="text" placeholder="例如：必修第一册" /></div>
+        <div class="field"><label>年级</label>
+          <select id="tbGrade">
+            ${Object.values(GRADE_OPTIONS).flat().map(([k, n]) =>
+              `<option value="${k}" ${k === 'senior_1' ? 'selected' : ''}>${n}</option>`).join('')}
+          </select></div>
+      </div>
+      <div style="height:14px"></div>
+      <button class="btn primary" id="tbUpload">上传并解析</button>
+      <div id="tbUpOut"></div>
+    </div>
+
+    <div class="card">
+      <h3>粘贴目录导入 <span class="tag">没有电子版时用</span></h3>
+      <p class="hint" style="margin:0 0 10px">
+        每行一条，<span class="mono">|</span> 分隔：章节 | 小节 | 关键词
+      </p>
+      <textarea id="tbRaw" style="min-height:96px" placeholder="第一章 集合与常用逻辑用语 | 1.1 集合的概念 | 集合,元素"></textarea>
+      <div style="height:10px"></div>
+      <div class="field"><label>目录名称</label>
+        <input id="tbTitle" type="text" value="自定义教材目录" /></div>
+      <div style="height:14px"></div>
+      <button class="btn" id="tbPaste">导入目录</button>
+      <div id="tbPasteOut"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>章节结构 <span class="tag">讲解时按这里定位到「第几章第几节」</span></h3>
+    <div id="tbOutline"><div class="empty">选一本教材查看结构</div></div>
+  </div>
+
+  <div id="tbDialog"></div>`;
+
+  // ---------- 版本列表 ----------
+  const loadEditions = async () => {
+    try {
+      const r = await api.get(`/api/textbook/editions?subject=${TB_STATE.subject}&stage=${TB_STATE.stage}`);
+      if (!$('#tbEditions')) return;
+      const eds = r.editions || [];
+      if (!eds.length) {
+        $('#tbEditions').innerHTML = `<div class="empty">该学段该科目暂无版本记录，可直接用下面「导入」自建</div>`;
+        return;
+      }
+      $('#tbEditions').innerHTML = eds.map(e => `
+        <div class="mem" data-code="${h(e.code)}" style="border-left-color:${
+          e.available ? '#16a34a' : '#e6eaf2'}">
+          <div class="mem-head">
+            <b style="font-size:13.5px">${h(e.name)}</b>
+            <span class="pill">${h(e.edition || '')}</span>
+            ${e.builtin ? '<span class="pill ok">内置目录</span>'
+              : (e.available ? '<span class="pill brand">已导入</span>'
+                             : '<span class="pill warn">需导入目录</span>')}
+            ${e.custom ? '<span class="pill">自定义</span>' : ''}
+            <span class="mem-meta">${h(e.publisher || '')}</span>
+            <div class="spacer"></div>
+            ${(e.books || []).map(b => `<button class="btn sm ${TB_STATE.openId === b.code ? 'primary' : ''}"
+                data-use="${h(b.code)}" data-id="?">${h(b.volume || b.title)}</button>`).join('')}
+          </div>
+        </div>`).join('');
+
+      // 绑定「设为当前 / 看结构」
+      const bookMap = {};
+      eds.forEach(e => (e.books || []).forEach(b => { bookMap[b.code] = b; }));
+      $$('#tbEditions [data-use]').forEach(btn => {
+        btn.onclick = async () => {
+          const code = btn.dataset.use;
+          try {
+            await api.post(`/api/textbook/select?subject=${TB_STATE.subject}&code=${encodeURIComponent(code)}`);
+            toast('已切换教材');
+            TB_STATE.currentCode = code;
+            await loadCurrent();
+          } catch (e) { toast(e.message, true); }
+        };
+      });
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // ---------- 当前 + 最新核查 ----------
+  const loadCurrent = async () => {
+    try {
+      const c = await api.get('/api/textbook/current?subject=' + TB_STATE.subject);
+      if (!$('#tbCur')) return;
+      if (!c.ok) {
+        $('#tbCur').textContent = '未选择';
+        $('#tbLatest').innerHTML = `<div class="empty">该科目还没有可用教材，先在上面选一个或导入</div>`;
+        $('#tbOutline').innerHTML = '<div class="empty">选一本教材查看结构</div>';
+        return;
+      }
+      $('#tbCur').textContent = `${c.title}（${c.publisher}${c.volume ? ' · ' + c.volume : ''}）`;
+      TB_STATE.openId = c.id;
+
+      const l = await api.get(`/api/textbook/${c.id}/latest`);
+      const checked = l.checked_at
+        ? l.checked_at.replace('T', ' ').slice(0, 16)
+        : '从未核查';
+      $('#tbLatest').innerHTML = `
+        <div class="row" style="flex-wrap:wrap;gap:10px">
+          <span class="pill ${l.checked_at ? 'ok' : 'warn'}">
+            ${l.checked_at ? '已核查过最新版本' : '尚未核查是否最新'}</span>
+          <span class="hint">上次核查：${h(checked)}</span>
+          <div class="spacer"></div>
+          <button class="btn" id="tbCheck">检查是否最新</button>
+        </div>
+        <div id="tbCheckOut" style="margin-top:10px">${
+          l.verdict ? `<div class="insight"><div class="d">${h(l.verdict).replace(/\n/g, '<br>')}</div>
+            ${(l.sources || []).length ? `<div class="a">来源：${l.sources.map((s, i) =>
+              `<a href="${h(s.url)}" target="_blank" rel="noopener">[${i + 1}] ${h(s.site || s.title)}</a>`).join('　')}</div>` : ''}
+          </div>` : '<div class="hint">教材会改版，内置年份可能过期。点「检查是否最新」会联网核查并给出来源。</div>'
+        }</div>`;
+
+      $('#tbCheck').onclick = async () => {
+        const btn = $('#tbCheck');
+        btn.disabled = true; btn.textContent = '联网核查中…';
+        $('#tbCheckOut').innerHTML = '<div class="empty">正在检索最新版本信息…</div>';
+        try {
+          const r = await api.post(`/api/textbook/${c.id}/check-update`);
+          if (!r.ok) {
+            $('#tbCheckOut').innerHTML = `<div class="insight medium"><div class="d">${h(r.message || '核查失败')}</div></div>`;
+          } else {
+            $('#tbCheckOut').innerHTML = `<div class="insight">
+              <div class="t">核查结果（记录版本：${h(r.recorded_edition || '未知')}）</div>
+              <div class="d">${h(r.verdict || '').replace(/\n/g, '<br>')}</div>
+              ${(r.sources || []).length ? `<div class="a">来源：${r.sources.map((s, i) =>
+                `<a href="${h(s.url)}" target="_blank" rel="noopener">[${i + 1}] ${h(s.site || s.title)}</a>`).join('　')}</div>` : ''}
+            </div>`;
+          }
+          loadEditions();
+        } catch (e) { $('#tbCheckOut').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+        finally { btn.disabled = false; btn.textContent = '检查是否最新'; }
+      };
+
+      showOutline(c.id);
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // ---------- 结构 ----------
+  const showOutline = async (id) => {
+    $('#tbOutline').innerHTML = '<div class="empty">加载中…</div>';
+    try {
+      const r = await api.get(`/api/textbook/${id}/outline`);
+      if (!r.ok) { $('#tbOutline').innerHTML = `<div class="empty">${h(r.message)}</div>`; return; }
+      const total = (r.chapters || []).reduce((a, c) => a + c.sections.length, 0);
+      $('#tbOutline').innerHTML = `
+        <div class="row" style="margin-bottom:12px;flex-wrap:wrap">
+          <b>${h(r.title)}</b>
+          <span class="pill">${h(r.volume || '')}</span>
+          <span class="pill">${h(r.publisher)}</span>
+          <span class="hint">${(r.chapters || []).length} 章 · ${total} 节</span>
+        </div>
+        ${(r.chapters || []).map(c => `
+          <div style="margin-bottom:12px">
+            <div style="font-weight:600;font-size:13.5px;margin-bottom:6px">${h(c.chapter)}</div>
+            ${c.sections.map(s => `
+              <div class="row" style="padding:5px 0 5px 14px;border-bottom:1px dashed #f4f6fb;font-size:12.5px">
+                <span style="color:#5a6577">${h(s.section)}</span>
+                <div class="spacer"></div>
+                ${(s.kp_codes || []).map(k => `<span class="pill" style="font-size:10px">${h(k)}</span>`).join('')}
+                ${s.chars ? `<span class="hint">${s.chars} 字</span>` : ''}
+              </div>`).join('')}
+          </div>`).join('')}`;
+    } catch (e) { $('#tbOutline').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+  };
+
+  // ---------- 上传 ----------
+  $('#tbUpload').onclick = async () => {
+    const f = $('#tbFile').files[0];
+    if (!f) return toast('先选一个文件', true);
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('subject', TB_STATE.subject);
+    fd.append('stage', TB_STATE.stage);
+    fd.append('grade', $('#tbGrade').value);
+    fd.append('volume', $('#tbVolume').value.trim());
+    fd.append('edition_name', $('#tbEdName').value.trim());
+    const y = $('#tbEdYear').value.trim();
+    if (y) fd.append('edition_year', y);
+    $('#tbUpOut').innerHTML = '<div class="empty">解析中…（大 PDF 可能要十几秒）</div>';
+    try {
+      const res = await fetch('/api/textbook/upload', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + state.token },
+        body: fd
+      });
+      const r = await res.json();
+      if (!res.ok) throw new Error(r.detail || ('HTTP ' + res.status));
+      $('#tbUpOut').innerHTML = `<div class="insight ${r.ok ? '' : 'high'}" style="margin-top:12px">
+        <div class="t">${r.ok ? '✅ 解析完成' : '❌ 解析失败'}</div>
+        <div class="d">${h(r.message || '')}</div></div>`;
+      if (r.ok) { toast(r.message); await loadEditions(); await loadCurrent(); }
+    } catch (e) {
+      $('#tbUpOut').innerHTML = `<div class="empty">${h(e.message)}</div>`;
+    }
+  };
+
+  // ---------- 粘贴目录 ----------
+  $('#tbPaste').onclick = async () => {
+    const raw = $('#tbRaw').value.trim();
+    if (!raw) return toast('目录内容为空', true);
+    try {
+      const r = await api.post('/api/textbook/outline', {
+        subject: TB_STATE.subject, raw, title: $('#tbTitle').value.trim() || '自定义教材目录',
+        stage: TB_STATE.stage,
+      });
+      if (r.ok === false) return toast(r.message, true);
+      $('#tbPasteOut').innerHTML = `<div class="insight" style="margin-top:12px"><div class="d">${h(r.message)}</div></div>`;
+      toast(r.message);
+      $('#tbRaw').value = '';
+      await loadEditions(); await loadCurrent();
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // ---------- 定位预览 ----------
+  $('#tbMatch').onclick = () => {
+    $('#tbDialog').innerHTML = `<div class="card" style="margin-top:16px">
+      <h3>定位预览</h3>
+      <p class="hint">输入你打算问的问题，看会命中课本哪几节（讲解时就是按这个定位）。</p>
+      <div class="row">
+        <input id="mtQ" type="text" placeholder="例如：二次函数顶点怎么求" style="flex:1" />
+        <button class="btn primary" id="mtGo">预览</button>
+      </div>
+      <div id="mtOut"></div>
+    </div>`;
+    $('#mtGo').onclick = async () => {
+      const q = $('#mtQ').value.trim();
+      if (!q) return toast('先输入问题', true);
+      try {
+        const r = await api.get(`/api/textbook/match?subject=${TB_STATE.subject}&q=${encodeURIComponent(q)}`);
+        if (!r.ok) { $('#mtOut').innerHTML = `<div class="empty">${h(r.message)}</div>`; return; }
+        $('#mtOut').innerHTML = `<div class="insight" style="margin-top:12px">
+          <div class="t">命中《${h(r.textbook)}》${h(r.volume || '')}</div>
+          <div class="d">${(r.sections || []).map(s => '· ' + h(s)).join('<br>')}</div>
+          <div class="a">识别到的知识点：${(r.kp_hints || []).map(k => h(k)).join('、') || '（无）'}</div>
+        </div>`;
+      } catch (e) { toast(e.message, true); }
+    };
+  };
+
+  $('#tbStage').value = TB_STATE.stage;
+  $('#tbStage').onchange = () => { TB_STATE.stage = $('#tbStage').value; loadEditions(); };
+  $('#tbSubject').value = TB_STATE.subject;
+  $('#tbSubject').onchange = () => { TB_STATE.subject = $('#tbSubject').value; loadEditions(); loadCurrent(); };
+
+  await loadEditions();
+  await loadCurrent();
 }
 
 /* ---------------- 视图：设置 ---------------- */

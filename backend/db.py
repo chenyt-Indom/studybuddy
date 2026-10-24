@@ -67,6 +67,14 @@ def _ensure_columns() -> None:
             "updated_at": "DATETIME",
             "verified_at": "DATETIME",
         },
+        "textbooks": {
+            "edition_code": "VARCHAR(16) DEFAULT ''",
+            "edition_name": "VARCHAR(64) DEFAULT ''",
+            "edition_year": "INTEGER",
+            "latest_check_at": "DATETIME",
+            "latest_verdict": "TEXT",
+            "latest_sources": "TEXT",
+        },
     }
     with engine.connect() as conn:
         for table, cols in wanted.items():
@@ -95,7 +103,9 @@ def _ensure_columns() -> None:
 def init_db() -> None:
     from . import models  # noqa: F401  注册所有表
     from .seeds import load_seeds
+    from .seeds_textbook import load_textbook_seeds
 
     Base.metadata.create_all(engine)
     _ensure_columns()
     load_seeds()
+    load_textbook_seeds()

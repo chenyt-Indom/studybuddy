@@ -24,6 +24,7 @@ from .api import (
     profile,
     review,
     system,
+    textbook,
 )
 from .config import BASE_DIR, settings
 from .db import init_db
@@ -87,6 +88,7 @@ for r in (
     insight.router,
     cross.router,
     memory.router,
+    textbook.router,
     system.router,
 ):
     app.include_router(r)

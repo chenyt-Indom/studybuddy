@@ -398,6 +398,49 @@ r = c.post("/api/memory/reset", params={"scope": "docs"}).json()
 check("可重置档案", r.get("deleted_docs", 0) >= 1, f"删除 {r.get('deleted_docs')} 节")
 check("重置后档案为空", len(c.get("/api/memory/docs").json()["docs"]) == 0)
 
+print("22. 教材通路：版本选择 / 跨册定位 / 目录导入")
+eds = c.get("/api/textbook/editions", params={"subject": "math", "stage": "senior"}).json()
+names = [e["name"] for e in eds["editions"]]
+check("可选多版本", len(names) >= 4, "/".join(names))
+check("人教A版有内置目录", any(e["code"] == "rja" and e["builtin"] for e in eds["editions"]))
+check("未内置的版本明确标注需导入",
+      any(e["name"] == "北师大版" and not e["builtin"] for e in eds["editions"]))
+
+cur = c.get("/api/textbook/current", params={"subject": "math"}).json()
+check("有当前教材", cur.get("ok") is True, f"{cur.get('title')}")
+
+# 跨册定位
+m1 = c.get("/api/textbook/match", params={"subject": "math", "q": "二次函数顶点怎么求"}).json()
+check("二次函数定位到 2.3 节",
+      any("2.3" in s for s in (m1.get("sections") or [])),
+      (m1.get("sections") or [""])[0])
+m2 = c.get("/api/textbook/match", params={"subject": "math", "q": "导数的几何意义"}).json()
+check("导数定位到选择性必修（跨册生效）",
+      "选择性必修" in " ".join(m2.get("sections") or []),
+      (m2.get("sections") or [""])[0])
+m3 = c.get("/api/textbook/match", params={"subject": "physics", "q": "平抛运动怎么算"}).json()
+check("平抛定位到必修第二册",
+      any("抛体" in s for s in (m3.get("sections") or [])),
+      (m3.get("sections") or [""])[0])
+
+# 结构
+o = c.get(f"/api/textbook/{cur['id']}/outline").json()
+n_ch = len(o.get("chapters") or [])
+n_sec = sum(len(ch["sections"]) for ch in o.get("chapters") or [])
+check("结构可读", o.get("ok") and n_ch > 0, f"{n_ch} 章 / {n_sec} 节")
+
+# 粘贴目录导入 + 删除
+r = c.post("/api/textbook/outline", json={
+    "subject": "math", "title": "E2E 自定义目录",
+    "raw": "第一章 测试章 | 1.1 测试节 | 二次函数\n第一章 测试章 | 1.2 另一节 | 导数",
+}).json()
+check("可粘贴目录导入", r.get("ok") and r.get("sections") == 2, r.get("message"))
+tid = r.get("id")
+if tid:
+    oo = c.get(f"/api/textbook/{tid}/outline").json()
+    check("导入的目录有结构", len(oo.get("chapters") or []) == 1)
+    check("可删除导入教材", c.delete(f"/api/textbook/{tid}").json().get("ok") is True)
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

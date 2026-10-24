@@ -3,10 +3,11 @@ uvicorn[standard]>=0.30
 sqlalchemy>=2.0
 httpx>=0.27
 PyJWT>=2.8
+python-multipart>=0.0.9
+pypdf>=6.0
 
 # 后续阶段（当前未启用，装上后改对应模块即可）
 # chromadb>=0.5        # 长期记忆的向量检索（方案 B9）
 # paddleocr>=2.7       # 错题拍照 OCR（方案 B41）
 # opencv-python>=4.9   # 图像预处理：去阴影/倾斜校正（方案 B40）
 # pillow>=10.0
-# python-multipart     # 上传文件用

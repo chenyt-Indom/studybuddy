@@ -391,6 +391,69 @@ class UserTextbook(Base):
     kb_version: Mapped[str | None] = mapped_column(String(32), default=None)
 
 
+class Textbook(Base):
+    """教材（结构库）。
+
+    ⚠️ 版权边界：
+      · 只入库**教材结构**（章、节、知识点顺序、难度）—— 这是公开信息
+      · 教材**正文**只在用户自己导入正版文件时存本地，绝不外传、不随仓库分发
+      · bundled=1 的是内置公开目录（只有结构，没有正文）
+    """
+
+    __tablename__ = "textbooks"
+    __table_args__ = (Index("idx_tb_lookup", "subject_key", "stage", "grade"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), default=None)
+
+    code: Mapped[str] = mapped_column(String(32), nullable=False)      # rj_a_math_bx1
+    # 版本（出版社 + 修订年）——「选教材版本」靠这两个字段区分
+    edition_code: Mapped[str] = mapped_column(String(16), default="")
+    edition_name: Mapped[str] = mapped_column(String(64), default="")
+    edition_year: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    title: Mapped[str] = mapped_column(String(128), default="")
+    subject_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    stage: Mapped[str] = mapped_column(String(16), default="senior")
+    grade: Mapped[str] = mapped_column(String(16), default="senior_1")
+    volume: Mapped[str] = mapped_column(String(32), default="")         # 必修第一册
+    publisher: Mapped[str] = mapped_column(String(32), default="人教A版")
+    year: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    bundled: Mapped[bool] = mapped_column(Boolean, default=False)
+    file_path: Mapped[str | None] = mapped_column(String(512), default=None)
+    page_count: Mapped[int] = mapped_column(Integer, default=0)
+    char_count: Mapped[int] = mapped_column(Integer, default=0)
+    parse_status: Mapped[str] = mapped_column(String(24), default="outline")  # outline/parsed/failed
+    parse_note: Mapped[str | None] = mapped_column(Text, default=None)
+
+    # 「确保最新」：只能靠联网核查 + 用户确认，不能靠猜
+    latest_check_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    latest_verdict: Mapped[str | None] = mapped_column(Text, default=None)
+    latest_sources: Mapped[str | None] = mapped_column(Text, default=None)  # JSON
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class TextbookSection(Base):
+    """教材章节结构。"""
+
+    __tablename__ = "textbook_sections"
+    __table_args__ = (Index("idx_tbs_tb", "textbook_id", "order_index"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    textbook_id: Mapped[int] = mapped_column(ForeignKey("textbooks.id"), nullable=False)
+    chapter: Mapped[str] = mapped_column(String(128), default="")
+    section: Mapped[str] = mapped_column(String(128), default="")
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    # 本节覆盖的知识点（JSON 数组，必须是知识点库里已有的 kp_code）
+    kp_codes: Mapped[str | None] = mapped_column(Text, default=None)
+    keywords: Mapped[str] = mapped_column(String(256), default="")
+    char_count: Mapped[int] = mapped_column(Integer, default=0)
+    # 仅供本地检索用的片段摘录（不对外分发）
+    excerpt: Mapped[str | None] = mapped_column(Text, default=None)
+
+
 class AppSetting(Base):
     """本地运行时配置（星辰 AppKey / model 等，不提交仓库）。"""
 

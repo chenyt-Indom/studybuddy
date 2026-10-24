@@ -29,6 +29,7 @@ from .profile.builder import (
     refresh_psych_state,
     refresh_style,
 )
+from .textbook import build_textbook_context
 from .tutor import build_tutor_prompt, SUBJECT_CN
 from .websearch import (
     WEB_SEARCH_COUNT,
@@ -90,6 +91,13 @@ def build_context(db, user_id: int, subject_key: str, user_text: str) -> dict:
     ctx["kp_hint"] = kp_codes
     # 记忆综述（档案层）：比逐条记忆更省 token，也更能体现"整体理解"
     ctx["profile_docs"] = build_doc_context(db, user_id)
+    # 教材定位：对齐课本章节
+    try:
+        ctx["textbook"] = build_textbook_context(
+            db, user_id, subject_key, user_text, kp_hints=kp_codes
+        )
+    except Exception:
+        ctx["textbook"] = None
     return ctx
 
 
