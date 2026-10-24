@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from ...config import TEMPERATURE_MAP
 from ...prompts import MEMORY_EXTRACT_PROMPT
-from ..llm.teleai import get_provider
+from ..llm import get_provider
 from ..util import parse_json_loose
 from .store import add_memory
 

@@ -1,6 +1,9 @@
 """全局配置：密钥不硬编码（方案约定 ①）。
 
-优先级：环境变量 > data/settings.json（本地运行时配置）> 默认值
+分层：
+  环境变量  >  data/secrets.bin（DPAPI 加密的 API Key）  >  data/settings.json（非敏感配置）
+
+API Key 与普通配置分开存：Key 走 SecretsStore 加密，其余走 settings.json。
 """
 from __future__ import annotations
 
@@ -8,6 +11,8 @@ import json
 import os
 import secrets
 from pathlib import Path
+
+from .services.secrets_store import SecretsStore
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -21,26 +26,57 @@ DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 SECRET_FILE = DATA_DIR / ".secret"
 
-# 星辰大模型（第四章 4.1 / 附录 C1）
-# 官方说明：不同区域、不同类型的模型，终端请求地址有差异，以控制台「调用示例」为准。
-DEFAULT_BASE_URL = "https://ai.ctaigw.cn/v1"
+# ---------------------------------------------------------------- 供应商
+# 都走 OpenAI 兼容协议，适配器同一套代码。
+PROVIDERS: dict[str, dict] = {
+    "deepseek": {
+        "label": "DeepSeek（推荐 · 国内直连）",
+        "base_url": "https://api.deepseek.com/v1",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+        "default_model": "deepseek-v4-flash",
+        "env_key": "DEEPSEEK_API_KEY",
+        "env_model": "DEEPSEEK_MODEL",
+        "presets": [
+            {"label": "官方 · OpenAI 格式", "value": "https://api.deepseek.com/v1"},
+            {"label": "官方 · 无 /v1 前缀", "value": "https://api.deepseek.com"},
+            {"label": "Anthropic 格式（本项目不用）", "value": "https://api.deepseek.com/anthropic"},
+        ],
+        "console": "https://platform.deepseek.com/api_keys",
+        "doc": "https://api-docs.deepseek.com/zh-cn/",
+        # 深度思考模式参数，仅 DeepSeek 支持
+        "thinking_param": True,
+    },
+    "teleai": {
+        "label": "中国电信星辰大模型",
+        "base_url": "https://ai.ctaigw.cn/v1",
+        "models": [],
+        "default_model": "",
+        "env_key": "TELEAI_APP_KEY",
+        "env_model": "TELEAI_MODEL",
+        "presets": [
+            {"label": "大陆 · 普通推理", "value": "https://ai.ctaigw.cn/v1"},
+            {"label": "大陆 · 编程 Token Plan", "value": "https://ai.ctaigw.cn/coding/v1"},
+            {"label": "全球 · 美洲", "value": "https://ai.ctaigw.com/amer/v1"},
+            {"label": "全球 · 欧洲", "value": "https://ai.ctaigw.com/eu/v1"},
+            {"label": "全球 · 亚洲", "value": "https://ai.ctaigw.com/as/v1"},
+        ],
+        "console": "https://ctxirang.ctyun.cn/maas/home",
+        "doc": "https://www.ctyun.cn/document/11061839/11062312",
+        "thinking_param": False,
+    },
+}
 
-# 官方文档核实的可用 base_url（https://www.ctyun.cn/document/11061839/11062312）
-# 终端节点：大陆 ai.ctaigw.cn；全球 ai.ctaigw.com/{region}/，region ∈ amer/eu/as
-BASE_URL_PRESETS = [
-    {"label": "大陆 · 普通推理", "value": "https://ai.ctaigw.cn/v1"},
-    {"label": "大陆 · 编程 Token Plan", "value": "https://ai.ctaigw.cn/coding/v1"},
-    {"label": "全球 · 美洲", "value": "https://ai.ctaigw.com/amer/v1"},
-    {"label": "全球 · 欧洲", "value": "https://ai.ctaigw.com/eu/v1"},
-    {"label": "全球 · 亚洲", "value": "https://ai.ctaigw.com/as/v1"},
-]
+DEFAULT_PROVIDER = "deepseek"
 
-# 平台入口（这些才是浏览器能打开的网页；ai.ctaigw.cn 是 API，不是网页）
-CONSOLE_URL = "https://ctxirang.ctyun.cn/maas/home"
+# 星空/星辰时代遗留常量，保留兼容
+DEFAULT_BASE_URL = PROVIDERS["teleai"]["base_url"]
+BASE_URL_PRESETS = PROVIDERS["teleai"]["presets"]
+CONSOLE_URL = PROVIDERS["teleai"]["console"]
 APPKEY_URL = "https://ctxirang.ctyun.cn/maas/service/serviceGroup"
 MODEL_SQUARE_URL = "https://ctxirang.ctyun.cn/maas/inlineService"
-DOC_URL = "https://www.ctyun.cn/document/11061839/11062312"
+DOC_URL = PROVIDERS["teleai"]["doc"]
 
+# ---------------------------------------------------------------- 其他
 # 分场景温度（方案 4.3）
 TEMPERATURE_MAP = {
     "tutor": 0.7,
@@ -51,6 +87,19 @@ TEMPERATURE_MAP = {
     "report": 0.6,
 }
 
+# 需要「关掉思考模式」的场景。
+# 原因：DeepSeek 思考模式下 temperature 不生效，而这些场景必须靠温度控制风格：
+#   抽记忆/挖模式/诊断 → 要确定性（低温度，不能瞎编）
+#   出题/周报        → 要多样性（高温度，避免每次出一样的题）
+# 只有 tutor（讲解）保留思考模式，质量优先，接受 latency。
+THINKING_OFF_SCENES = {
+    "extract_memory",
+    "mine_pattern",
+    "diagnose",
+    "generate_quiz",
+    "report",
+}
+
 # 模式挖掘样本门槛（方案约定 ⑤）
 MIN_SAMPLES_QUESTION = 30
 MIN_SAMPLES_MISTAKE = 10
@@ -59,18 +108,40 @@ MIN_SAMPLES_MISTAKE = 10
 CONVERSATION_DELETABLE = False
 
 
+# ---------------------------------------------------------------- 读写
 def _load_settings() -> dict:
-    if SETTINGS_FILE.exists():
-        try:
-            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
+    if not SETTINGS_FILE.exists():
+        return {}
+    try:
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
 def save_settings(patch: dict) -> dict:
+    """保存非敏感配置。结构：{provider, providers:{name:{base_url,model}}}"""
     data = _load_settings()
-    data.update({k: v for k, v in patch.items() if v is not None})
+
+    # 迁移旧结构（扁平 app_key/model/base_url 时代）
+    if "app_key" in data or "model" in data or "base_url" in data:
+        legacy = {
+            "base_url": data.pop("base_url", None) or PROVIDERS["teleai"]["base_url"],
+            "model": data.pop("model", None) or "",
+        }
+        data.pop("app_key", None)  # 旧明文 key 不再使用，用户需重新填
+        data.setdefault("providers", {}).setdefault("teleai", legacy)
+        data.setdefault("provider", "teleai")
+
+    providers = data.setdefault("providers", {})
+    for name, cfg in (patch.get("providers") or {}).items():
+        if name in PROVIDERS and isinstance(cfg, dict):
+            slot = providers.setdefault(name, {})
+            for k in ("base_url", "model"):
+                if cfg.get(k) is not None:
+                    slot[k] = cfg[k]
+    if patch.get("provider") in PROVIDERS:
+        data["provider"] = patch["provider"]
+
     SETTINGS_FILE.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -78,41 +149,108 @@ def save_settings(patch: dict) -> dict:
 
 
 class Settings:
-    """运行时可变的配置（通过 /api/system/config 写入）。"""
+    """运行时配置。API Key 一律从 SecretsStore（加密）或环境变量取。"""
 
     def __init__(self) -> None:
         self._cache = _load_settings()
+        self.secrets = SecretsStore(DATA_DIR)
 
     def reload(self) -> None:
         self._cache = _load_settings()
 
-    def _get(self, env_key: str, json_key: str, default: str = "") -> str:
-        v = os.getenv(env_key)
-        if v:
-            return v
-        return str(self._cache.get(json_key) or default)
+    # ---- 供应商 ----
+    @property
+    def provider(self) -> str:
+        p = self._cache.get("provider") or DEFAULT_PROVIDER
+        return p if p in PROVIDERS else DEFAULT_PROVIDER
+
+    def set_provider(self, name: str) -> None:
+        self._cache["provider"] = name
+        SETTINGS_FILE.write_text(
+            json.dumps(self._cache, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    @property
+    def meta(self) -> dict:
+        return PROVIDERS[self.provider]
+
+    def _slot(self, name: str | None = None) -> dict:
+        name = name or self.provider
+        return (self._cache.get("providers") or {}).get(name) or {}
+
+    # ---- Key（不落明文、不回传）----
+    def key_of(self, name: str | None = None) -> str:
+        name = name or self.provider
+        env = os.getenv(PROVIDERS[name]["env_key"], "")
+        if env:
+            return env.strip()
+        return self.secrets.get(name)
 
     @property
     def app_key(self) -> str:
-        return self._get("TELEAI_APP_KEY", "app_key")
+        return self.key_of()
 
+    # ---- 其余配置 ----
     @property
     def base_url(self) -> str:
-        return self._get("TELEAI_BASE_URL", "base_url", DEFAULT_BASE_URL).rstrip("/")
+        env = os.getenv("LLM_BASE_URL", "")
+        if env:
+            return env.rstrip("/")
+        slot = self._slot()
+        return (slot.get("base_url") or self.meta["base_url"]).rstrip("/")
 
     @property
     def model(self) -> str:
-        return self._get("TELEAI_MODEL", "model")
+        env = os.getenv(self.meta["env_model"], "")
+        if env:
+            return env.strip()
+        slot = self._slot()
+        return slot.get("model") or self.meta["default_model"]
 
     @property
     def configured(self) -> bool:
         return bool(self.app_key and self.model)
 
     @property
+    def key_protected(self) -> bool:
+        """Key 是否加密存储（非 Windows 会降级为明文，前端要如实提示）。"""
+        return self.secrets.protected
+
+    # ---- 列表（给前端，永不含 Key）----
+    def providers_public(self) -> list[dict]:
+        out = []
+        for name, meta in PROVIDERS.items():
+            slot = self._slot(name)
+            key = self.key_of(name)
+            out.append(
+                {
+                    "name": name,
+                    "label": meta["label"],
+                    "base_url": slot.get("base_url") or meta["base_url"],
+                    "model": slot.get("model") or meta["default_model"],
+                    "models": meta["models"],
+                    "presets": meta["presets"],
+                    "console": meta["console"],
+                    "doc": meta["doc"],
+                    "has_key": bool(key),
+                    "key_masked": _mask_public(key),
+                    "from_env": bool(os.getenv(meta["env_key"], "")),
+                    "configured": bool(key and (slot.get("model") or meta["default_model"])),
+                }
+            )
+        return out
+
+    @property
     def jwt_secret(self) -> str:
         if not SECRET_FILE.exists():
             SECRET_FILE.write_text(secrets.token_urlsafe(48), encoding="utf-8")
         return SECRET_FILE.read_text(encoding="utf-8").strip()
+
+
+def _mask_public(key: str) -> str:
+    from .services.secrets_store import mask
+
+    return mask(key)
 
 
 settings = Settings()

@@ -169,10 +169,38 @@ print("14. 对话不可删除")
 r = c.delete("/api/chat/conversations")
 check("no delete endpoint", r.status_code in (404, 405), f"HTTP {r.status_code}")
 
-print("15. 星辰配置状态")
-r = c.get("/api/system/config")
+print("15. API Key 保密性（核心安全验收）")
+FAKE_KEY = "sk-test1234567890abcdefSECRET9876"
+r = c.post("/api/system/config", json={
+    "provider": "deepseek", "api_key": FAKE_KEY,
+    "model": "deepseek-flash", "base_url": "https://api.deepseek.com/v1",
+})
 j = r.json()
-check("config read", r.status_code == 200, f"mode={j['mode']} base_url={j['base_url']}")
+raw = json.dumps(j, ensure_ascii=False)
+check("保存 Key 成功", r.status_code == 200 and j.get("provider") == "deepseek")
+check("保存响应不含明文 Key", FAKE_KEY not in raw)
+check("保存响应只返回掩码", "****" in raw, [p["key_masked"] for p in j["providers"] if p["has_key"]])
+check("加密存储已启用", j.get("secure_storage") is True)
+
+r2 = c.get("/api/system/config")
+raw2 = json.dumps(r2.json(), ensure_ascii=False)
+check("GET 配置也不回传明文", FAKE_KEY not in raw2)
+
+from pathlib import Path as _P
+sec = _P("data/secrets.bin")
+blob = sec.read_bytes() if sec.exists() else b""
+check("磁盘 secrets.bin 中找不到明文", b"" != blob and FAKE_KEY.encode() not in blob,
+      f"{len(blob)} bytes")
+
+r4 = c.post("/api/system/key/clear", json={"provider": "deepseek"})
+cleared = r4.json()
+check("可以一键清除 Key",
+      cleared.get("ok") is True and not any(p["has_key"] for p in cleared["providers"]))
+
+r5 = c.get("/api/system/config")
+cur = [p for p in r5.json()["providers"] if p["name"] == "deepseek"][0]
+check("清除后回到未配置", cur["has_key"] is False and not r5.json()["configured"],
+      f"model={cur['model']} base_url={cur['base_url']}")
 
 print("16. 聊过之后，认知风格应该能被推断出来")
 import time as _t

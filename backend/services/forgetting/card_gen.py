@@ -4,7 +4,7 @@ from __future__ import annotations
 from ...config import TEMPERATURE_MAP
 from ...models import KnowledgePoint, KpMastery, Mistake
 from ...prompts import CARD_PROMPT
-from ..llm.teleai import get_provider
+from ..llm import get_provider
 from ..util import parse_json_loose
 
 
@@ -30,7 +30,7 @@ async def generate_cards(
             ],
             temperature=TEMPERATURE_MAP["generate_quiz"],
             max_tokens=1200,
-            scene="card",
+            scene="generate_quiz",
         )
         cards = parse_json_loose(raw, list)
         out = []

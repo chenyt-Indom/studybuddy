@@ -16,7 +16,7 @@ from ..models import Conversation, KpMastery, Message
 from .cross_subject.graph import cross_hint
 from .forgetting.scheduler import check_review_in_chat, ensure_review_state
 from .kp import candidates, match_kp_codes
-from .llm.teleai import get_provider
+from .llm import get_provider
 from .memory.extractor import extract_memories, persist_memories
 from .memory.recall import recall
 from .memory.store import decay_all
@@ -108,12 +108,18 @@ async def stream_reply(user_id: int, subject_key: str, user_text: str) -> AsyncI
 
     llm = get_provider()
     acc: list[str] = []
+    reasoning_chars = 0
     try:
-        async for delta in llm.stream(
+        async for evt in llm.stream(
             messages, temperature=0.7, max_tokens=2048, scene="tutor"
         ):
-            acc.append(delta)
-            yield {"type": "delta", "text": delta}
+            if evt["type"] == "reasoning":
+                reasoning_chars += len(evt["text"])
+                # 思维链单独推给前端做「深度思考中」提示，不混进正文
+                yield {"type": "reasoning", "text": evt["text"]}
+            else:
+                acc.append(evt["text"])
+                yield {"type": "delta", "text": evt["text"]}
     except Exception as exc:  # noqa: BLE001
         msg = f"调用大模型失败：{exc}"
         yield {"type": "error", "message": msg}

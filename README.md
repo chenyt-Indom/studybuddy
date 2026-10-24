@@ -3,80 +3,142 @@
 > 同样一个问题，不同的学生问，应该得到完全不同的回答。
 > 这个能力叫**专精化（Specialization）**——不是回答「问题」，而是回答「你问这个问题的这个人」。
 
-![状态](https://img.shields.io/badge/status-v0.1%20%E5%88%9D%E7%A8%BF-brightgreen)
+![状态](https://img.shields.io/badge/status-v0.1.1%20%E5%88%9D%E7%A8%BF-brightgreen)
 ![发布](https://img.shields.io/badge/release-v0.1.0--draft-orange)
+![模型](https://img.shields.io/badge/model-deepseek--flash-4d6bfe)
 ![后端](https://img.shields.io/badge/FastAPI-0.162-009688)
 ![前端](https://img.shields.io/badge/%E5%89%8D%E7%AB%AF-%E6%97%A0%E6%9E%84%E5%BB%BA%E5%8D%95%E9%A1%B5-lightgrey)
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
-> **当前版本：v0.1 初稿（`v0.1.0-draft`）**
+> **当前版本：v0.1.1 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
 > 这是按方案落地的**第一版可运行骨架**：三条主线（专精化 / 遗忘曲线 / 跨科目）已跑通，
 > 但不是完成品。错题 OCR、教材配置、课表、周报尚未接入，记忆召回是降级实现。
-> 完整的功能边界见 [「已实现」](#三已实现v01) 与 [「还没做」](#五还没做说清楚别误会) 两节。
+> 完整的功能边界见 [「已实现」](#四已实现v01) 与 [「还没做」](#六还没做说清楚别误会) 两节。
 
-基于**中国电信星辰大模型**、按《学习智能助手智能体开发方案（专精化版）》v3 实现的 PC 端学习助手。
+按《学习智能助手智能体开发方案（专精化版）》v3 实现的 PC 端学习助手。
+大模型可切换 **DeepSeek（默认）** 或 **中国电信星辰**。
 
 ---
 
-## 一、星辰大模型 API
+## 一、大模型接入（当前默认 DeepSeek）
 
-### ⚠️ 先纠正一个常见误解
+同时支持 **DeepSeek** 与 **中国电信星辰**，都走 OpenAI 兼容协议，适配器同一套代码。
+在设置页切换即可，不用改代码。
 
-**`https://ai.ctaigw.cn/v1` 是 API 端点，不是网页。**
-用浏览器直接打开它，只会得到一段 401 JSON 或者一片空白 —— **这是正常的，不是坏了**。
-它是给程序调用的，必须带 `Authorization: Bearer <AppKey>` 请求头才会返回数据。
-
-要在浏览器里操作（申请 Key、看模型、看调用示例），请打开**控制台**：
-
-### 🔗 浏览器能打开的链接（这些才是网页）
-
-| 用途 | 链接 |
-| --- | --- |
-| **星辰控制台首页** | https://ctxirang.ctyun.cn/maas/home |
-| **申请 AppKey** | https://ctxirang.ctyun.cn/maas/service/serviceGroup |
-| **模型广场 / 预置服务** | https://ctxirang.ctyun.cn/maas/inlineService |
-| **官方 API 文档** | https://www.ctyun.cn/document/11061839/11062312 |
-
-AppKey 获取路径：**控制台 → 系统管理 → APP Key 管理 → 创建服务组 → 绑定服务 → 获取 AppKey**
-
-### API 端点（给程序用的，浏览器打不开属正常）
+### DeepSeek 参数（已核对官方文档）
 
 | 项 | 值 |
 | --- | --- |
-| 大陆终端节点 | `https://ai.ctaigw.cn` |
-| **Base URL（普通推理）** | **`https://ai.ctaigw.cn/v1`** |
-| **Base URL（编程 Token Plan）** | **`https://ai.ctaigw.cn/coding/v1`** |
-| Base URL（全球区域） | `https://ai.ctaigw.com/{region}/v1`，region ∈ `amer` / `eu` / `as` |
-| 对话接口 | `POST {base}/chat/completions` |
-| 鉴权 | `Authorization: Bearer <AppKey>` |
-| 协议 | OpenAI 兼容 ✅ |
-| 建议请求头 | `User-Agent`（不带可能被安全护栏拦截，本项目已自动加） |
+| **Base URL（OpenAI 格式）** | **`https://api.deepseek.com/v1`** |
+| 对话接口 | `POST https://api.deepseek.com/v1/chat/completions` |
+| 模型列表 | `GET https://api.deepseek.com/v1/models` |
+| 鉴权 | `Authorization: Bearer <API Key>` |
+| **推荐模型** | **`deepseek-flash`**（= DeepSeek-V4.1-Flash-1017） |
+| 更强但更贵 | `deepseek-v4-pro` |
+| 上下文 / 最大输出 | 1M / 384K |
+| 拿 Key | https://platform.deepseek.com/api_keys |
+| 官方文档 | https://api-docs.deepseek.com/zh-cn/ |
 
-实测：不带 Key 请求返回
+**模型名的坑（很重要）**
+
+- ✅ 用 `deepseek-flash` —— 这就是 V4.1 Flash
+- ⚠️ `deepseek-v4-flash` 是**已下线**的旧名，仍可调用但会兼容路由到 V4.1 Flash
+- ❌ `deepseek-v4.1-flash` 这个名字**不存在**，写了会报错
+- ❌ `deepseek-chat` / `deepseek-reasoner` 已在 **2026-07-24 弃用**
+
+**思考模式（默认开启，会影响温度）**
 
 ```json
-{"error":{"message":"未携带Authorization请求头","type":"authentication_error",
-          "code":"no_authentication_credential"}}
+{"model": "deepseek-flash", "messages": [...],
+ "thinking": {"type": "enabled"}, "reasoning_effort": "low"}
 ```
 
-HTTP 401 + `content-type: application/json` —— 证明网关真实在线、标准 OpenAI 兼容。
+- 参数放在请求体根层：`{"thinking": {"type": "enabled" | "disabled"}}`
+- 强度：`{"reasoning_effort": "low" | "high" | "max"}`
+- ⚠️ **思考模式下 `temperature` / `presence_penalty` / `frequency_penalty` 不生效**
+  （设置不报错，但被忽略）。所以「要温度」的场景必须显式关掉思考。
+- 流式返回里思维链在 `reasoning_content`，与 `content` 同级
 
-### 三个必踩的坑
+本项目按场景自动分配（`backend/config.py` 的 `THINKING_OFF_SCENES`）：
 
-1. **`/v1` 和 `/coding/v1` 不能混用**
-   普通推理是 `/v1`；买了**编程 Token Plan** 的专属地址是 `/coding/v1`。
-   填错会报模型不存在或鉴权失败。设置页给了预设按钮，点一下就行。
-2. **`model` 到底填什么**
-   以「控制台 → 模型广场 → 模型详情页 → 调用示例」为准。
-   设置页有「探测可用模型」按钮，走 `GET {base}/models` —— 但这是 OpenAI 的惯例接口，
-   **星辰官方文档并没有列出它**，部分套餐下会 404。探测失败不代表配置错了，
-   以控制台抄到的名字为准。
-3. **全球区域域名不同**
-   大陆是 `ai.ctaigw.cn`，全球是 `ai.ctaigw.com/{region}/`，不是 `.cn`。
+| 场景 | 思考模式 | temperature | 原因 |
+| --- | --- | --- | --- |
+| `tutor` 讲解 | ✅ 开（effort=low） | 不传 | 讲课质量优先，接受延迟 |
+| `extract_memory` 抽记忆 | ❌ 关 | 0.1 | 要确定，不能瞎编 |
+| `mine_pattern` 挖模式 | ❌ 关 | 0.2 | 要严谨推断 |
+| `diagnose` 诊断 | ❌ 关 | 0.2 | 要客观 |
+| `generate_quiz` 出题 | ❌ 关 | 0.8 | 要多样性，避免重复出题 |
+| `report` 周报 | ❌ 关 | 0.6 | 自然但客观 |
+
+### 中国电信星辰（备选）
+
+**`https://ai.ctaigw.cn/v1` 是 API 端点，不是网页** —— 浏览器打开只会得到 401 或空白，
+这是正常的。要在浏览器里操作请打开控制台：
+
+| 用途 | 链接 |
+| --- | --- |
+| 星辰控制台 | https://ctxirang.ctyun.cn/maas/home |
+| 申请 AppKey | https://ctxirang.ctyun.cn/maas/service/serviceGroup |
+| 模型广场 | https://ctxirang.ctyun.cn/maas/inlineService |
+| 官方文档 | https://www.ctyun.cn/document/11061839/11062312 |
+
+- 大陆：`https://ai.ctaigw.cn/v1`；编程 Token Plan：`/coding/v1`；全球：`ai.ctaigw.com/{amer|eu|as}/v1`
+- `model` 名必须自己填（控制台 → 模型广场 → 模型详情 → 调用示例）
 
 ---
 
-## 二、快速开始（Windows PC）
+## 二、API Key 怎么保密
+
+你说的是「能在前端直接输入 API，并且保密」。这两件事同时成立的关键在于：
+
+> **「前端输入」不等于「前端持有」。**
+> Key 提交一次就离开浏览器，之后所有调用都在后端完成。
+
+### 数据流
+
+```text
+浏览器（输入框）
+   │  只提交一次，走 127.0.0.1 回环，不出网卡
+   ▼
+FastAPI 后端
+   │  Windows DPAPI 加密（CryptProtectData）
+   ▼
+data/secrets.bin   ← 密文，与「当前 Windows 用户 + 本机」绑定
+   │
+   └─► 调 DeepSeek 时在后端解密使用，明文永不回传浏览器
+```
+
+### 七条硬约束（改代码时别破）
+
+1. **Key 只进不出** —— 所有接口只返回掩码 `sk-a1b2****9f8e`，绝不回传明文
+2. **加密落盘** —— DPAPI 加密，拷到别的机器 / 别的 Windows 用户下解不开
+3. **前端无痕** —— 不写 localStorage、不写 cookie，输入框提交后立即清空
+4. **浏览器不直连大模型** —— 所有请求由后端代理，F12 的 Network 里翻不到 Key
+5. **报错擦除** —— 异常信息统一过 `scrub()`，即便网关回显了 Key 也会被替换成掩码
+6. **不硬编码** —— `data/` 已在 `.gitignore`，不会随仓库推上 GitHub
+7. **可一键删除** —— 设置页有「删除已保存的 Key」
+
+### 这层保护防什么、不防什么（如实说）
+
+- ✅ 防：Key 出现在浏览器开发者工具、前端源码、localStorage、Git 提交历史、日志里
+- ✅ 防：拷走 `data/` 目录到别的电脑后直接读出 Key
+- ⚠️ 不防：**已经在你这台电脑上、以你的 Windows 账号运行的恶意程序**。
+  DPAPI 是按用户隔离的，同账号的进程理论上能调用解密。要做到那一步得靠系统层面的隔离。
+
+### 环境变量（可选，优先级更高）
+
+临时覆盖或 CI 场景可以不落盘：
+
+```bash
+DEEPSEEK_API_KEY=sk-xxx
+DEEPSEEK_MODEL=deepseek-flash
+```
+
+环境变量存在时，设置页会显示「环境变量已配置」，本机存储那份不生效。
+
+---
+
+## 三、快速开始（Windows PC）
 
 ### 方式一：双击
 
@@ -108,15 +170,16 @@ python -m uvicorn backend.main:app --reload --port 8787
 
 ---
 
-## 三、已实现（v0.1）
+## 四、已实现（v0.1）
 
 按方案「三条主线 + 两条通路」落地：
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| 星辰 API 适配器 | ✅ | `LLMProvider` 抽象 + `TeleAIProvider` + `MockProvider` 降级；httpx 直连，不依赖 openai SDK |
-| 分场景温度 | ✅ | tutor 0.7 / 抽记忆 0.1 / 挖模式 0.2 / 出题 0.8 / 周报 0.6 |
-| SSE 流式对话 | ✅ | 含 `X-Accel-Buffering: no`，前端边收边渲染 |
+| 大模型适配器 | ✅ | `LLMProvider` 抽象 + DeepSeek / 星辰（共用 OpenAI 兼容逻辑）+ `MockProvider` 降级；httpx 直连，不依赖 openai SDK |
+| 分场景温度 + 思考模式 | ✅ | 讲解开思考（effort=low）；抽记忆 0.1 / 挖模式 0.2 / 出题 0.8 / 周报 0.6 且关思考，保证温度生效 |
+| SSE 流式对话 | ✅ | 含 `X-Accel-Buffering: no`；思维链 `reasoning_content` 单独推前端做「深度思考中」提示 |
+| **API Key 保密** | ✅ | 前端输入一次 → DPAPI 加密落盘 → 接口只回掩码 → 浏览器不直连模型；8 项安全验收覆盖 |
 | **专精化引擎** | ✅ | 四维画像、认知风格推断（视觉/语言/动手/逻辑）、心理状态、讲解风格自适应 |
 | **遗忘曲线引擎** | ✅ | SM-2 三参数（EF/interval/repetitions）、指数衰减记忆强度、三级优先级队列、复习卡生成 |
 | **跨科目协调** | ✅ | 知识点关联图谱、跨科提示、协同建议、偏科预警 |
@@ -125,11 +188,11 @@ python -m uvicorn backend.main:app --reload --port 8787
 | 错题本 | ⚠️ | 手动录入 + 自动知识点归因 + 错因六分类；OCR 未接 |
 | 成绩与趋势 | ✅ | 逐题记录、百分制趋势、掌握度重算 |
 | 对话不可删除 | ✅ | 不提供删除接口，`is_deletable` 恒为 0，前端无删除按钮 |
-| 密钥不硬编码 | ✅ | 环境变量 > `data/settings.json`；`data/` 已在 .gitignore |
+| 密钥不硬编码 | ✅ | 环境变量 > DPAPI 加密的 `data/secrets.bin` > `data/settings.json`；`data/` 已在 .gitignore |
 
 ### 怎么验证「专精化」真的生效
 
-学习档案页右上角有个「**看我的 Prompt 长什么样**」——点开会显示实际发给星辰的
+学习档案页右上角有个「**看我的 Prompt 长什么样**」——点开会显示实际发给大模型的
 system prompt。同一道题，视觉型 + 信心低 + 中档题弱的学生，和语言型 + 审题弱的
 学生，拿到的 Prompt 完全不同。这是专精化最直接的证据，不是嘴上说说。
 
@@ -138,7 +201,7 @@ system prompt。同一道题，视觉型 + 信心低 + 中档题弱的学生，�
 
 ---
 
-## 四、目录结构
+## 五、目录结构
 
 ```text
 studybuddy/
@@ -151,19 +214,20 @@ studybuddy/
 │   ├── prompts/                # 提示词集中管理（附录 A）
 │   ├── api/                    # auth chat profile grade review mistake insight cross system
 │   └── services/
-│       ├── llm/                # 星辰适配器（base / teleai / mock）
+│       ├── llm/                # 大模型适配（base / openai_compat / teleai 垫片）
 │       ├── profile/            # 专精化引擎（style_infer / builder）
 │       ├── pattern/            # 模式挖掘（analyzer / error_pattern / gap / miner）
 │       ├── forgetting/         # 遗忘曲线（sm2 / strength / scheduler / card_gen）
 │       ├── cross_subject/      # 跨科目（graph）
 │       ├── memory/             # 记忆库（extractor / store / recall）
+│       ├── secrets_store.py    # API Key 加密存储（DPAPI）+ 掩码/擦除
 │       ├── tutor.py            # build_tutor_prompt —— 专精化的落地点
 │       ├── chat_service.py     # 一次对话触发三个引擎
 │       ├── mastery.py  kp.py   # 掌握度计算 / 知识点候选检索
 │       └── util.py             # 模型 JSON 输出健壮解析
 ├── frontend/                   # 无构建单页（原生 JS + 手写 SVG 图表）
 ├── tests/
-│   ├── smoke_test.py           # 后端端到端 27 项
+│   ├── smoke_test.py           # 后端端到端 34 项
 │   └── dom_test.cjs            # 前端 DOM 冒烟 13 项
 ├── data/                       # 运行时数据（不入库）
 └── start.bat
@@ -182,7 +246,7 @@ studybuddy/
 
 ---
 
-## 五、还没做（说清楚，别误会）
+## 六、还没做（说清楚，别误会）
 
 | 项 | 方案章节 | 现在的状态 |
 | --- | --- | --- |
@@ -199,7 +263,7 @@ studybuddy/
 
 ---
 
-## 六、测试
+## 七、测试
 
 ```bash
 # 后端端到端（需要服务已启动）
@@ -210,15 +274,15 @@ npm i jsdom
 node tests\dom_test.cjs
 ```
 
-当前结果：**后端 27/27 通过，前端 13/13 通过**。
+当前结果：**后端 34/34 通过，前端 13/13 通过**（其中 8 项是 API Key 保密性验收）。
 
 后端测试覆盖：注册登录 → 改画像 → 录 30 条逐题成绩 → 触发 P1/P4 洞察 →
 复习队列 → SM-2 打分 → 遗忘曲线 → 错题自动归因 → 错因画像 → 跨科图谱 →
-认知风格推断 → SSE 流式 → 对话不可删除 → 星辰配置。
+认知风格推断 → SSE 流式 → 对话不可删除 → **API Key 保密性（8 项）**。
 
 ---
 
-## 七、设计原则
+## 八、设计原则
 
 1. **不做替代思考的工具** —— AI 负责讲清楚和追问，答案要学生自己组织出来
 2. **数据属于用户** —— 全本地 SQLite，不联网不上传，可导出
@@ -227,7 +291,20 @@ node tests\dom_test.cjs
 
 ---
 
-## 八、版本记录
+## 九、版本记录
+
+### v0.1.1 · 接入 DeepSeek + API Key 保密（2026-10-25）
+
+**定位**：按用户要求把主用模型从星辰换成 DeepSeek，并把「前端输入 Key 且保密」真正做扎实。
+
+- 新增 `DeepSeekProvider`，与星辰共用 `OpenAICompatProvider`（同一套 OpenAI 兼容逻辑）
+- 默认模型 `deepseek-flash`（= V4.1-Flash-1017），base_url `https://api.deepseek.com/v1`
+- 处理 DeepSeek 思考模式：讲解开思考，其余场景关思考以保证 temperature 生效
+- 新增 `secrets_store.py`：Windows DPAPI 加密存储 Key，掩码输出，报错擦除
+- 设置页重写：供应商切换 / Key 输入（提交即清空）/ 掩码状态 / 一键删除 / 拉取模型列表
+- 前端对话新增「深度思考中…已想 N 字」提示，思维链不混进正文
+- 安全验收 8 项：响应无明文、只回掩码、磁盘无明文、可清除等
+- 测试：后端 34/34、前端 13/13
 
 ### v0.1 初稿 · `v0.1.0-draft`（2026-10-25）
 

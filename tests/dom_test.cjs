@@ -100,7 +100,7 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   // 逐个视图渲染
   for (const [key, mustHave] of [
     ['dashboard', '学情看板'], ['review', '复习中心'], ['mistakes', '错题本'],
-    ['insight', '洞察'], ['profile', '学习档案'], ['settings', '星辰大模型']
+    ['insight', '洞察'], ['profile', '学习档案'], ['settings', '选择供应商']
   ]) {
     const link = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === key);
     link.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

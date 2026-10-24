@@ -271,6 +271,7 @@ async function sendMessage() {
 
   const bubbleEl = $('#' + botId + ' .bubble');
   let acc = '';
+  let reasonChars = 0;
 
   try {
     const res = await fetch('/api/chat/stream', {
@@ -297,6 +298,12 @@ async function sendMessage() {
         if (evt.type === 'meta') {
           state.chatMeta = evt;
           renderCtx(evt);
+        } else if (evt.type === 'reasoning') {
+          // DeepSeek 深度思考：思维链不混进正文，只做一个轻提示
+          reasonChars += (evt.text || '').length;
+          if (!acc) {
+            bubbleEl.innerHTML = `<span class="hint">深度思考中…已想 ${reasonChars} 字</span>`;
+          }
         } else if (evt.type === 'delta') {
           acc += evt.text;
           bubbleEl.innerHTML = md(acc);
@@ -764,132 +771,248 @@ async function viewProfile(root) {
 }
 
 /* ---------------- 视图：设置 ---------------- */
+let secCfg = null;
+
+const MODEL_HINTS = {
+  deepseek: [
+    ['deepseek-flash', 'V4.1 Flash · 推荐'],
+    ['deepseek-v4-pro', 'V4 Pro · 更贵更强']
+  ],
+  teleai: []
+};
+
 async function viewSettings(root) {
-  root.innerHTML = `<div class="page-h"><div><h2>设置</h2>
-    <div class="desc">接入中国电信星辰大模型 · AppKey 只存本地 data/settings.json，不进仓库</div></div></div>
-    <div class="grid g2">
-      <div class="card"><h3>星辰大模型</h3>
-        <div class="field"><label>base_url（不同的模型/套餐地址不同，点下面预设快速填）</label>
-          <input id="cBase" type="text" placeholder="https://ai.ctaigw.cn/v1" /></div>
-        <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px" id="presetBox"></div>
-        <div style="height:12px"></div>
-        <div class="field"><label>AppKey</label>
-          <input id="cKey" type="password" placeholder="控制台 → 系统管理 → APP Key 管理 → 创建服务组" /></div>
-        <div style="height:10px"></div>
-        <div class="field"><label>model（不确定就去控制台「模型广场」抄，或试试探测）</label>
-          <input id="cModel" type="text" placeholder="在控制台-模型广场-模型详情页-调用示例里看" /></div>
-        <div style="height:14px"></div>
-        <div class="row" style="flex-wrap:wrap">
-          <button class="btn primary" id="saveC">保存配置</button>
-          <button class="btn" id="probe">探测可用模型</button>
-          <button class="btn" id="testChat">测试对话</button>
-          <button class="btn ghost" id="health">连通性自检</button>
+  root.innerHTML = `
+  <div class="page-h">
+    <div><h2>设置</h2>
+      <div class="desc">选供应商 → 填 Key → 测试连接。Key 加密存本机，只进不出。</div></div>
+  </div>
+  <div class="grid g2">
+    <div class="card">
+      <h3>① 选择供应商</h3>
+      <div class="row" style="flex-wrap:wrap;gap:8px" id="provBox"></div>
+      <div id="keyStatus" style="margin-top:14px"></div>
+
+      <div style="height:16px"></div>
+      <div class="field"><label>API Key</label>
+        <div class="row">
+          <input id="cKey" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="粘贴后点保存，输入框会立即清空" style="flex:1" />
+          <button class="btn" id="toggleKey" type="button">显示</button>
         </div>
-        <div id="modelList"></div>
-        <div id="testOut"></div>
       </div>
-      <div class="card"><h3>接入指引</h3>
-        <p class="hint" style="margin:0 0 10px">
-          <b>先搞清楚一件事</b>：<span class="mono">ai.ctaigw.cn</span> 是 <b>API 端点</b>，不是网页。
-          用浏览器直接打开它，只会得到 401 或一片空白 —— 这是正常的，不是坏了。
-          要在浏览器里操作，请打开下面的控制台。
-        </p>
-        <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:14px">
-          <a class="btn sm" href="https://ctxirang.ctyun.cn/maas/home" target="_blank" rel="noopener">① 打开星辰控制台 ↗</a>
-          <a class="btn sm" href="https://ctxirang.ctyun.cn/maas/service/serviceGroup" target="_blank" rel="noopener">② 申请 AppKey ↗</a>
-          <a class="btn sm" href="https://ctxirang.ctyun.cn/maas/inlineService" target="_blank" rel="noopener">③ 模型广场（抄 model 名）↗</a>
-          <a class="btn sm ghost" href="https://www.ctyun.cn/document/11061839/11062312" target="_blank" rel="noopener">官方 API 文档 ↗</a>
-        </div>
-        <ol class="hint" style="padding-left:18px;line-height:2">
-          <li>星辰控制台登录（天翼云账号），完成实名认证</li>
-          <li><b>模型推理 → 预置服务</b>：开通/购买你要用的模型（或用 Token Plan 量包）</li>
-          <li><b>系统管理 → APP Key 管理 → 创建服务组 → 绑定服务</b>：拿到 AppKey</li>
-          <li><b>模型广场 → 模型详情页 → 调用示例</b>：这里能看到真实的 base_url 和 model 名</li>
-          <li>把 AppKey 和 model 填到左边，保存</li>
-          <li>左下角状态从「离线演示模式」变成「星辰模型已接入」即成功</li>
-        </ol>
-        <div style="height:10px"></div>
-        <p class="hint"><b>常见坑</b>：<br>
-          · 普通推理用 <span class="mono">/v1</span>；买了<b>编程 Token Plan</b> 的用
-          <span class="mono">/coding/v1</span>，两者不能混用<br>
-          · 全球区域是 <span class="mono">ai.ctaigw.com/{amer|eu|as}/v1</span>，不是 .cn<br>
-          · 请求头建议带 User-Agent，否则可能被安全护栏拦截（本项目已自动加）</p>
-        <p class="hint">没填 AppKey 也能用：学情看板、复习调度、错题归因、掌握度计算
-          这些都不依赖大模型；只有对话和复习卡生成需要真实模型。</p>
+      <p class="hint" style="margin:6px 0 0">只提交这一次。之后浏览器里再也没有明文。</p>
+
+      <div style="height:14px"></div>
+      <div class="field"><label>模型名</label>
+        <input id="cModel" type="text" placeholder="deepseek-flash" /></div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px" id="modelChips"></div>
+
+      <div style="height:14px"></div>
+      <div class="field"><label>base_url</label>
+        <input id="cBase" type="text" placeholder="https://api.deepseek.com/v1" /></div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px" id="presetBox"></div>
+
+      <div style="height:18px"></div>
+      <div class="row" style="flex-wrap:wrap">
+        <button class="btn primary" id="saveC">保存</button>
+        <button class="btn" id="testChat">测试连接</button>
+        <button class="btn" id="probe">拉取模型列表</button>
+        <button class="btn ghost" id="clearKey" style="color:#b91c1c">删除已保存的 Key</button>
       </div>
-    </div>`;
+      <div id="modelList"></div>
+      <div id="testOut"></div>
+    </div>
+
+    <div class="card">
+      <h3>② 保密是怎么做到的</h3>
+      <p class="hint" style="margin:0 0 12px">
+        「前端输入」和「前端持有」是两件事。这里做的是前者，绝不做后者。
+      </p>
+      <ol class="hint" style="padding-left:18px;line-height:2;margin:0 0 14px">
+        <li>Key 只提交 <b>一次</b>，走 <span class="mono">127.0.0.1</span> 回环，不出网卡</li>
+        <li>后端用 <b>Windows DPAPI</b> 加密后存 <span class="mono">data/secrets.bin</span>，
+            绑定<b>当前 Windows 用户 + 本机</b>，拷到别的机器解不开</li>
+        <li>任何接口只返回<b>掩码</b>（<span class="mono">sk-a1b2****9f8e</span>），明文永不出后端</li>
+        <li>前端<b>不写 localStorage、不写 cookie</b>，输入框提交后立即清空</li>
+        <li>所有大模型调用都在<b>后端</b>完成 —— 浏览器不直连 DeepSeek，
+            所以 F12 的 Network 里翻不到 Key</li>
+        <li>报错信息统一过 <span class="mono">scrub()</span>，万一网关回显了 Key 也会被抹掉</li>
+        <li><span class="mono">data/</span> 已在 .gitignore，不会随仓库推上 GitHub</li>
+      </ol>
+      <div id="secureNote"></div>
+      <div style="height:14px"></div>
+      <h3>③ 去哪拿 Key</h3>
+      <div class="row" style="flex-wrap:wrap;gap:8px" id="linkBox"></div>
+      <p class="hint" style="margin-top:12px">
+        <b>DeepSeek 注意</b>：模型名用 <span class="mono">deepseek-flash</span>
+        （即 V4.1 Flash）。旧名 <span class="mono">deepseek-v4-flash</span> 已下线，
+        虽然还能调但会兼容路由到 V4.1 Flash；<span class="mono">deepseek-chat</span> /
+        <span class="mono">deepseek-reasoner</span> 已在 2026-07-24 弃用。
+      </p>
+      <p class="hint">
+        <b>思考模式</b>：DeepSeek 默认开启深度思考，此时 temperature 参数<b>不生效</b>。
+        本项目已按场景区分 —— 讲课类开思考（质量优先），抽记忆 / 挖模式 / 出题关思考（要确定性）。
+      </p>
+    </div>
+  </div>`;
+
+  // ---------- 渲染 ----------
+  const renderCfg = (c) => {
+    secCfg = c;
+    const cur = (c.providers || []).find(p => p.name === c.provider) || {};
+
+    // 供应商
+    $('#provBox').innerHTML = (c.providers || []).map(p => `
+      <button class="btn ${p.name === c.provider ? 'primary' : ''}" data-p="${h(p.name)}">
+        ${h(p.label)}${p.has_key ? ' ✓' : ''}
+      </button>`).join('');
+    $$('#provBox .btn').forEach(b => b.onclick = async () => {
+      if (b.dataset.p === secCfg.provider) return;
+      try {
+        await api.post('/api/system/config', { provider: b.dataset.p });
+        toast('已切换供应商');
+        renderSettingsReload(root);
+      } catch (e) { toast(e.message, true); }
+    });
+
+    // Key 状态
+    if (cur.from_env) {
+      $('#keyStatus').innerHTML = `<span class="pill ok">环境变量已配置</span>
+        <span class="hint"> 从 ${h(cur.name === 'deepseek' ? 'DEEPSEEK_API_KEY' : 'TELEAI_APP_KEY')} 读取，
+        优先级高于本机存储</span>`;
+    } else if (cur.has_key) {
+      $('#keyStatus').innerHTML = `<span class="pill ok">已保存并加密</span>
+        <span class="mono" style="margin-left:6px">${h(cur.key_masked)}</span>
+        <div class="hint" style="margin-top:6px">留空提交不会覆盖现有 Key；要换就填新的。</div>`;
+    } else {
+      $('#keyStatus').innerHTML = `<span class="pill warn">未配置 Key</span>
+        <span class="hint"> 当前是离线演示模式，对话会用占位回复</span>`;
+    }
+    $('#cKey').value = '';
+    $('#cKey').placeholder = cur.has_key
+      ? `已保存 ${cur.key_masked}，留空则不修改`
+      : '粘贴后点保存，输入框会立即清空';
+
+    // 模型 / base_url
+    $('#cModel').value = cur.model || '';
+    $('#cBase').value = cur.base_url || '';
+    $('#cModel').placeholder = (MODEL_HINTS[c.provider] || [])[0]?.[0] || '手动填写模型名';
+
+    $('#modelChips').innerHTML = (MODEL_HINTS[c.provider] || []).map(([m, d]) =>
+      `<span class="pill brand" style="cursor:pointer" data-m="${h(m)}">${h(m)}
+        <span style="opacity:.7">· ${h(d)}</span></span>`).join('');
+    $$('#modelChips .pill').forEach(el => el.onclick = () => {
+      $('#cModel').value = el.dataset.m;
+    });
+
+    $('#presetBox').innerHTML = (cur.presets || []).map(p =>
+      `<span class="pill" style="cursor:pointer" data-u="${h(p.value)}"
+         title="${h(p.value)}">${h(p.label)}</span>`).join('');
+    $$('#presetBox .pill').forEach(el => el.onclick = () => {
+      $('#cBase').value = el.dataset.u;
+    });
+
+    // 安全说明
+    $('#secureNote').innerHTML = `<div class="insight ${c.secure_storage ? '' : 'high'}">
+      <div class="t">${c.secure_storage ? '✅ 加密存储已启用' : '⚠️ 加密存储不可用'}</div>
+      <div class="d">${h(c.secure_note || '')}</div></div>`;
+
+    // 平台链接
+    $('#linkBox').innerHTML = `
+      <a class="btn sm" href="${h(cur.console || '#')}" target="_blank" rel="noopener">申请 API Key ↗</a>
+      <a class="btn sm ghost" href="${h(cur.doc || '#')}" target="_blank" rel="noopener">官方文档 ↗</a>`;
+  };
+
+  const renderSettingsReload = async () => {
+    try {
+      const c = await api.get('/api/system/config');
+      if (!$('#provBox')) return;
+      renderCfg(c);
+    } catch (e) { toast(e.message, true); }
+  };
+
+  try {
+    const c = await api.get('/api/system/config');
+    if (!$('#provBox')) return;
+    renderCfg(c);
+  } catch (e) {
+    toast(e.message, true);
+    return;
+  }
+
+  // ---------- 交互 ----------
+  $('#toggleKey').onclick = () => {
+    const inp = $('#cKey');
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    $('#toggleKey').textContent = show ? '隐藏' : '显示';
+  };
 
   $('#saveC').onclick = async () => {
+    const k = $('#cKey').value.trim();
+    const body = {
+      provider: secCfg.provider,
+      model: $('#cModel').value.trim(),
+      base_url: $('#cBase').value.trim()
+    };
+    // 只有真的填了才带 api_key，留空表示「不修改」
+    if (k) body.api_key = k;
+    $('#cKey').value = '';           // 提交即清空，不在 DOM 里留明文
+    $('#cKey').type = 'password';
+    $('#toggleKey').textContent = '显示';
     try {
-      const body = { base_url: $('#cBase').value.trim(), model: $('#cModel').value.trim() };
-      const k = $('#cKey').value.trim();
-      if (k) body.app_key = k;
-      const r = await api.post('/api/system/config', body);
-      state.sysConfig = r;
-      toast(r.configured ? '已保存，星辰模型已接入' : '已保存（AppKey 或 model 还没填全）');
+      const c = await api.post('/api/system/config', body);
+      renderCfg(c);
+      toast(c.configured ? '已保存，模型已接入' : '已保存（还差 Key 或模型名）');
+      refreshMode();
+    } catch (e) { toast(e.message, true); }
+  };
+
+  $('#clearKey').onclick = async () => {
+    if (!confirm('确定删除已保存的 API Key？删除后需要重新填写。')) return;
+    try {
+      const r = await api.post('/api/system/key/clear', { provider: secCfg.provider });
+      if (r.ok === false) return toast(r.message || '删除失败', true);
+      renderCfg({ provider: r.provider, providers: r.providers,
+                  configured: r.configured, secure_storage: r.secure_storage,
+                  secure_note: r.secure_note });
+      toast('已删除');
       refreshMode();
     } catch (e) { toast(e.message, true); }
   };
 
   $('#probe').onclick = async () => {
-    $('#modelList').innerHTML = '<div class="empty">探测中…</div>';
+    $('#modelList').innerHTML = '<div class="empty">拉取中…</div>';
     try {
-      const r = await api.get('/api/system/models');
+      const r = await api.get('/api/system/models?provider=' + encodeURIComponent(secCfg.provider));
       if (!r.ok) {
         $('#modelList').innerHTML = `<div class="insight medium" style="margin-top:12px">
-          <div class="t">探测没成功（这不代表配置错了）</div>
+          <div class="t">没拉到列表（不代表配置错了）</div>
           <div class="d">${h(r.message || '未知原因')}</div>
-          ${r.hint ? `<div class="a">${h(r.hint)}</div>` : ''}
-        </div>`;
+          ${r.hint ? `<div class="a">${h(r.hint)}</div>` : ''}</div>`;
         return;
       }
-      $('#modelList').innerHTML = `<div style="margin-top:12px"><h5 class="hint">可用模型（${r.count} 个，点一下填入）</h5>
+      $('#modelList').innerHTML = `<div style="margin-top:12px">
+        <h5 class="hint">可用模型（${r.count} 个，点一下填入）</h5>
         <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
-        ${r.models.map(m => `<span class="pill brand" style="cursor:pointer" data-m="${h(m)}">${h(m)}</span>`).join('')}
-        </div></div>`;
+        ${r.models.map(m => `<span class="pill brand" style="cursor:pointer"
+            data-m="${h(m)}">${h(m)}</span>`).join('')}</div></div>`;
       $$('#modelList .pill').forEach(p => p.onclick = () => { $('#cModel').value = p.dataset.m; });
     } catch (e) { $('#modelList').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
   };
 
   $('#testChat').onclick = async () => {
-    $('#testOut').innerHTML = '<div class="empty">测试中…</div>';
+    $('#testOut').innerHTML = '<div class="empty">测试中…（一次真实调用）</div>';
     try {
       const r = await api.post('/api/system/test-chat');
       $('#testOut').innerHTML = `<div class="insight ${r.ok ? '' : 'high'}" style="margin-top:12px">
-        <div class="t">${r.ok ? '✅ 连通成功' : '❌ 连通失败'}（provider: ${h(r.provider)}）</div>
-        <div class="d">${h(r.ok ? r.reply : r.message)}</div></div>`;
+        <div class="t">${r.ok ? '✅ 连通成功' : '❌ 连通失败'}</div>
+        <div class="d">${r.ok
+          ? `provider=${h(r.provider)} · model=${h(r.model)} · 回复：${h(r.reply || '')}`
+          : h(r.message || '')}</div></div>`;
     } catch (e) { $('#testOut').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
   };
-
-  $('#health').onclick = async () => {
-    $('#testOut').innerHTML = '<div class="empty">检查中…</div>';
-    try {
-      const r = await api.get('/api/system/health');
-      $('#testOut').innerHTML = `<pre class="mono" style="margin-top:12px;background:#f7f9fc;
-        padding:12px;border-radius:8px;white-space:pre-wrap">${h(JSON.stringify(r, null, 2))}</pre>`;
-    } catch (e) { $('#testOut').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
-  };
-
-  // 事件绑完再拉配置，避免 await 期间视图被切走
-  try {
-    const c = await api.get('/api/system/config');
-    if (!$('#cBase')) return;
-    $('#cBase').value = c.base_url || '';
-    $('#cKey').placeholder = c.has_key ? `已保存：${c.app_key_masked}（留空则不修改）` : '粘贴你的 AppKey';
-    $('#cModel').value = c.model || '';
-    state.sysConfig = c;
-    // base_url 预设（官方文档核实的五种终端节点）
-    const pbox = $('#presetBox');
-    if (pbox && c.presets) {
-      pbox.innerHTML = c.presets.map(p =>
-        `<span class="pill brand" style="cursor:pointer" data-u="${h(p.value)}"
-           title="${h(p.value)}">${h(p.label)}</span>`).join('');
-      $$('#presetBox .pill').forEach(el => el.onclick = () => {
-        $('#cBase').value = el.dataset.u;
-        toast('已填入 base_url，别忘了点保存');
-      });
-    }
-  } catch (e) { toast(e.message, true); }
 }
 
 /* ---------------- 启动 ---------------- */
