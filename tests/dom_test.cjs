@@ -112,6 +112,12 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   const chatLink = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'chat');
   chatLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await waitFor(() => doc.querySelector('#inp'));
+  // 等历史加载完（发送按钮从 disabled 变可用），否则会撞上渲染覆盖
+  await waitFor(() => {
+    const s = doc.querySelector('#send');
+    return s && s.disabled === false;
+  }, 15000);
+  check('历史加载完成后输入框可用', doc.querySelector('#send').disabled === false);
 
   const inp = doc.querySelector('#inp');
   inp.value = '二次函数的顶点怎么求？我想看图理解';
@@ -120,11 +126,29 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   const gotReply = await waitFor(() => {
     const bots = doc.querySelectorAll('.msg.bot .bubble');
     const last = bots[bots.length - 1];
-    return last && last.textContent.length > 40 && !last.querySelector('.typing');
-  }, 20000);
-  const bots = doc.querySelectorAll('.msg.bot .bubble');
-  const lastText = bots.length ? bots[bots.length - 1].textContent : '';
+    return last && !last.querySelector('.typing') && last.querySelector('.ans') &&
+      last.querySelector('.ans').textContent.length > 40;
+  }, 60000);
+  const bots = doc.querySelectorAll('.msg.bot');
+  const lastBot = bots[bots.length - 1];
+  const lastText = lastBot ? lastBot.querySelector('.ans').textContent : '';
   check('SSE 流式消息到达', gotReply, `${lastText.length} 字`);
+
+  // 思维链折叠块
+  const think = lastBot && lastBot.querySelector('.think');
+  const thinkBody = lastBot && lastBot.querySelector('.think-body');
+  check('存在思维链折叠块', !!(think && !think.hidden && thinkBody), 
+        thinkBody ? `正文 ${thinkBody.textContent.length} 字` : '');
+  if (think && thinkBody) {
+    const wasHidden = thinkBody.hidden;
+    think.querySelector('.think-head').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    const toggled = thinkBody.hidden !== wasHidden;
+    check('思维链可展开/收起', toggled,
+          `点击前 hidden=${wasHidden}，点击后 hidden=${thinkBody.hidden}`);
+    think.querySelector('.think-head').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  }
+  check('联网开关存在', !!doc.querySelector('#webMode'),
+        doc.querySelector('#webMode') ? doc.querySelector('#webMode').value : '');
 
   const ctxHtml = doc.querySelector('#ctx').textContent;
   check('右侧上下文面板更新', ctxHtml.includes('认知风格'), ctxHtml.slice(0, 40).replace(/\s+/g, ' '));

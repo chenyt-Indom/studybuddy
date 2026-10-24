@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 from typing import AsyncIterator
 
 from sqlalchemy import desc, select
 
+from ..config import MAX_TOKENS_MAP, TEMPERATURE_MAP, now_context, settings
 from ..db import session_scope
 from ..models import Conversation, KpMastery, Message
 from .cross_subject.graph import cross_hint
@@ -27,6 +29,15 @@ from .profile.builder import (
     refresh_style,
 )
 from .tutor import build_tutor_prompt, SUBJECT_CN
+from .websearch import (
+    WEB_SEARCH_COUNT,
+    WebSearchClient,
+    build_search_query,
+    format_context,
+    should_search,
+    sources_public,
+    today_line,
+)
 
 HISTORY_TURNS = 12
 
@@ -75,8 +86,16 @@ def build_context(db, user_id: int, subject_key: str, user_text: str) -> dict:
     return ctx
 
 
-async def stream_reply(user_id: int, subject_key: str, user_text: str) -> AsyncIterator[dict]:
-    """SSE 数据流。yield dict：{type: meta|delta|done|error}"""
+async def stream_reply(
+    user_id: int,
+    subject_key: str,
+    user_text: str,
+    use_web: bool | None = None,
+) -> AsyncIterator[dict]:
+    """SSE 数据流。事件类型：meta / status / search / reasoning / delta / error / done
+
+    use_web: True 强制联网、False 强制不联网、None 交给启发式判断
+    """
     user_text = (user_text or "").strip()
     if not user_text:
         yield {"type": "error", "message": "空消息"}
@@ -92,8 +111,18 @@ async def stream_reply(user_id: int, subject_key: str, user_text: str) -> AsyncI
         review_note = check_review_in_chat(db, user_id, subject_key)
         kp_hint = ctx.get("kp_hint") or []
 
-    system_prompt = build_tutor_prompt(ctx, subject_key)
-    messages = [{"role": "system", "content": system_prompt}] + hist
+    # ---------- 时间感知 ----------
+    tc = now_context()
+    ctx["time_line"] = today_line()
+
+    # ---------- 是否联网 ----------
+    can_search = settings.search_enabled and settings.search_supported
+    if use_web is True:
+        do_search = can_search
+    elif use_web is False:
+        do_search = False
+    else:
+        do_search = can_search and should_search(user_text)
 
     yield {
         "type": "meta",
@@ -104,18 +133,52 @@ async def stream_reply(user_id: int, subject_key: str, user_text: str) -> AsyncI
         "patterns_used": len(ctx.get("patterns") or []),
         "cross_subject": ctx.get("cross_subject"),
         "kp_hint": kp_hint,
+        "time": tc["display"],
+        "web": {"supported": settings.search_supported,
+                "enabled": settings.search_enabled,
+                "planned": do_search},
     }
+
+    # ---------- 联网检索（在拼 Prompt 之前，结果要进上下文）----------
+    search_info: dict = {"used": False, "results": [], "query": "", "message": ""}
+    if do_search:
+        q = build_search_query(user_text, SUBJECT_CN.get(subject_key, ""))
+        yield {"type": "status", "text": f"正在联网检索：{q}"}
+        res = await WebSearchClient().search(q, ori_question=user_text)
+        if res.get("ok") and res.get("results"):
+            picked = res["results"][:WEB_SEARCH_COUNT]
+            ctx["search_context"] = format_context(picked)
+            search_info = {
+                "used": True,
+                "query": q,
+                "results": sources_public(picked),
+                "message": f"检索到 {len(picked)} 条网页",
+            }
+        else:
+            search_info = {
+                "used": False,
+                "query": q,
+                "results": [],
+                "message": res.get("message") or "没有检索到相关网页",
+            }
+        yield {"type": "search", **search_info}
+
+    system_prompt = build_tutor_prompt(ctx, subject_key)
+    messages = [{"role": "system", "content": system_prompt}] + hist
 
     llm = get_provider()
     acc: list[str] = []
-    reasoning_chars = 0
+    reasoning: list[str] = []
     try:
         async for evt in llm.stream(
-            messages, temperature=0.7, max_tokens=2048, scene="tutor"
+            messages,
+            temperature=TEMPERATURE_MAP["tutor"],
+            max_tokens=MAX_TOKENS_MAP["tutor"],
+            scene="tutor",
         ):
             if evt["type"] == "reasoning":
-                reasoning_chars += len(evt["text"])
-                # 思维链单独推给前端做「深度思考中」提示，不混进正文
+                reasoning.append(evt["text"])
+                # 思维链原样推给前端，由前端折叠展示（可展开/收起）
                 yield {"type": "reasoning", "text": evt["text"]}
             else:
                 acc.append(evt["text"])
@@ -134,6 +197,7 @@ async def stream_reply(user_id: int, subject_key: str, user_text: str) -> AsyncI
         return
 
     answer = "".join(acc)
+    reason_text = "".join(reasoning)
 
     # ⑥ 异步后处理：抽取记忆 / 更新掌握度 / 排复习 / 重算风格
     asyncio.create_task(
@@ -145,9 +209,24 @@ async def stream_reply(user_id: int, subject_key: str, user_text: str) -> AsyncI
         answer += review_note
 
     with session_scope() as db:
-        db.add(Message(conversation_id=conv_id, role="assistant", content=answer))
+        db.add(
+            Message(
+                conversation_id=conv_id,
+                role="assistant",
+                content=answer,
+                reasoning=reason_text or None,
+                sources=json.dumps(search_info["results"], ensure_ascii=False)
+                if search_info["used"] else None,
+            )
+        )
 
-    yield {"type": "done", "conversation_id": conv_id}
+    yield {
+        "type": "done",
+        "conversation_id": conv_id,
+        "answer_chars": len(answer),
+        "reasoning_chars": len(reason_text),
+        "truncated": len(answer) < 40,  # 粗判：几乎没内容，多半是被截断
+    }
 
 
 async def _post_process(

@@ -45,9 +45,35 @@ def session_scope() -> Iterator[Session]:
         db.close()
 
 
+def _ensure_columns() -> None:
+    """轻量迁移：SQLite 加列。create_all 不会给已有表补列，这里手动补。"""
+    from sqlalchemy import text
+
+    wanted = {
+        "messages": {
+            "reasoning": "TEXT",
+            "sources": "TEXT",
+        },
+    }
+    with engine.connect() as conn:
+        for table, cols in wanted.items():
+            try:
+                rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            except Exception:
+                continue
+            existing = {r[1] for r in rows}
+            if not existing:
+                continue
+            for name, ddl in cols.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+        conn.commit()
+
+
 def init_db() -> None:
     from . import models  # noqa: F401  注册所有表
     from .seeds import load_seeds
 
     Base.metadata.create_all(engine)
+    _ensure_columns()
     load_seeds()

@@ -247,3 +247,53 @@ table.tbl tr:last-child td { border-bottom: 0; }
   .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .g3 { grid-template-columns: 1fr; }
 }
+
+/* ---------- 思维链折叠 ---------- */
+.think { margin-bottom: 10px; }
+.think-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  border: 1px dashed #dfe5ff; background: #f6f8ff; color: #4a5a8a;
+  padding: 7px 11px; border-radius: 8px; cursor: pointer; font-size: 12.5px;
+  text-align: left; transition: background .12s;
+}
+.think-head:hover { background: #eef2ff; }
+.think-head .ico { font-size: 13px; }
+.think-head .len { color: #8d97a8; }
+.think-head .chev { margin-left: auto; color: var(--brand); font-size: 12px; }
+.think-body {
+  margin: 6px 0 0; padding: 11px 13px; max-height: 340px; overflow: auto;
+  background: #fbfcff; border: 1px solid #e9edfa; border-left: 3px solid #c7d2fe;
+  border-radius: 8px; font-size: 12.5px; line-height: 1.8; color: #5a6577;
+  white-space: pre-wrap; word-break: break-word;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+
+/* ---------- 检索状态行 ---------- */
+.srcline {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; margin-bottom: 9px; padding-bottom: 9px;
+  border-bottom: 1px dashed #e6eaf2;
+}
+.spin {
+  width: 11px; height: 11px; border-radius: 50%; display: inline-block;
+  border: 2px solid #dfe5ff; border-top-color: var(--brand);
+  animation: sp .7s linear infinite;
+}
+@keyframes sp { to { transform: rotate(360deg); } }
+
+/* ---------- 参考来源 ---------- */
+.sources { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #e6eaf2; }
+.src-title { font-size: 11.5px; color: var(--ink-3); margin-bottom: 7px; font-weight: 600; }
+.src {
+  display: flex; align-items: baseline; gap: 7px; padding: 5px 0;
+  text-decoration: none; color: var(--ink); font-size: 12.5px;
+  border-bottom: 1px solid #f4f6fb;
+}
+.src:last-child { border-bottom: 0; }
+.src:hover .st { color: var(--brand); text-decoration: underline; }
+.src .idx {
+  flex: 0 0 16px; height: 16px; border-radius: 4px; background: var(--brand-soft);
+  color: var(--brand); font-size: 10.5px; display: grid; place-items: center;
+}
+.src .st { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src .sm { color: var(--ink-3); font-size: 11px; white-space: nowrap; }

@@ -87,6 +87,29 @@ TEMPERATURE_MAP = {
     "report": 0.6,
 }
 
+# 分场景输出上限（tokens）。
+# DeepSeek-V4.1-Flash 最大输出 384K，但给太高模型容易啰嗦，按场景给够就行。
+# tutor 之前是 2048，长讲解必被截断 —— 这就是用户反馈"只输出一半"的原因。
+MAX_TOKENS_MAP = {
+    "tutor": 16384,
+    "generate_quiz": 6144,
+    "report": 4096,
+    "extract_memory": 2048,
+    "mine_pattern": 1536,
+    "diagnose": 2048,
+}
+
+# ----------------  Web 搜索（DeepSeek 官方 Search 接口）----------------
+# POST {base}/tools/search  —— 独立接口，按次计费：5 元 / 1000 次
+# 只有 HTTP 200 且 results 非空才计费，失败/无结果不计费
+WEB_SEARCH_COUNT = 6          # 返回条数（不影响单价）
+WEB_SEARCH_NEED_CONTENT = False  # 用 summary（600~800字）足够，不拉正文更省
+WEB_SEARCH_MAX_CONTEXT = 7000    # 注入 prompt 的最大字符数，防爆上下文
+WEB_SEARCH_TIMEOUT = 25
+
+# 时间感知用的时区
+APP_TIMEZONE = "Asia/Shanghai"
+
 # 需要「关掉思考模式」的场景。
 # 原因：DeepSeek 思考模式下 temperature 不生效，而这些场景必须靠温度控制风格：
 #   抽记忆/挖模式/诊断 → 要确定性（低温度，不能瞎编）
@@ -141,6 +164,8 @@ def save_settings(patch: dict) -> dict:
                     slot[k] = cfg[k]
     if patch.get("provider") in PROVIDERS:
         data["provider"] = patch["provider"]
+    if patch.get("search_enabled") is not None:
+        data["search_enabled"] = bool(patch["search_enabled"])
 
     SETTINGS_FILE.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -216,6 +241,24 @@ class Settings:
         """Key 是否加密存储（非 Windows 会降级为明文，前端要如实提示）。"""
         return self.secrets.protected
 
+    # ---- 联网搜索 ----
+    @property
+    def search_enabled(self) -> bool:
+        """是否允许联网搜索。默认开启（仅 DeepSeek 支持）。"""
+        v = self._cache.get("search_enabled")
+        return True if v is None else bool(v)
+
+    def set_search_enabled(self, on: bool) -> None:
+        self._cache["search_enabled"] = bool(on)
+        SETTINGS_FILE.write_text(
+            json.dumps(self._cache, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    @property
+    def search_supported(self) -> bool:
+        """只有 DeepSeek 有 /tools/search 这个接口。"""
+        return self.provider == "deepseek"
+
     # ---- 列表（给前端，永不含 Key）----
     def providers_public(self) -> list[dict]:
         out = []
@@ -251,6 +294,35 @@ def _mask_public(key: str) -> str:
     from .services.secrets_store import mask
 
     return mask(key)
+
+
+def now_context() -> dict:
+    """当前时间上下文（时间感知）。每次都现算，不用缓存 —— 服务可能跑好几天。
+
+    时区处理：Windows 上 zoneinfo 需要额外装 tzdata，装不上会直接抛
+    ZoneInfoNotFoundError 把整个请求打挂。而中国自 1991 年起不实行夏令时，
+    固定 UTC+8 与 Asia/Shanghai 完全等价，所以这里做降级而不是加依赖。
+    """
+    from datetime import datetime, timedelta, timezone as _tz
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo(APP_TIMEZONE)
+    except Exception:
+        tz = _tz(timedelta(hours=8), name="UTC+8")
+
+    now = datetime.now(tz)
+    wd = "一二三四五六日"[now.weekday()]
+    return {
+        "iso": now.isoformat(timespec="minutes"),
+        "date": f"{now.year}年{now.month}月{now.day}日",
+        "weekday": f"星期{wd}",
+        "time": now.strftime("%H:%M"),
+        "year": now.year,
+        "month": now.month,
+        "display": f"{now.year}年{now.month}月{now.day}日 星期{wd} {now.strftime('%H:%M')}",
+    }
 
 
 settings = Settings()

@@ -2,10 +2,14 @@
 不依赖真实大模型（无 Key 时走离线演示模式）。
 """
 import json
+import os
 import sys
 import time
 
-import httpx
+# 让 `python tests/smoke_test.py` 也能 import backend.*
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import httpx  # noqa: E402
 
 BASE = "http://127.0.0.1:8787"
 # 每次跑用独立账号，避免上一轮的逐题记录累积，导致统计口径不准
@@ -240,6 +244,69 @@ check("style after chat", st.get("primary") is not None,
 print("17. 异步记忆提取（离线模式下应为 0 条，属正常）")
 r = c.get("/api/system/memories")
 check("memory endpoint", r.status_code == 200, f"{len(r.json())} 条")
+
+print("18. 时间感知 / 联网搜索 / 思维链 / 长输出")
+cfg = c.get("/api/system/config").json()
+check("配置含联网开关", "search" in cfg, f"enabled={cfg.get('search', {}).get('enabled')}")
+r = c.post("/api/system/search", json={"enabled": True})
+check("可开启联网", r.json().get("search", {}).get("enabled") is True)
+
+acc, reason, meta, search_evt, done_evt = [], [], None, None, None
+with c.stream("POST", "/api/chat/stream", json={
+    "subject": "math",
+    "message": "2026年广东高考数学有什么最新变化？",
+    "use_web": True,
+}) as resp:
+    for line in resp.iter_lines():
+        if not line.startswith("data:"):
+            continue
+        evt = json.loads(line[5:].strip())
+        t = evt["type"]
+        if t == "meta":
+            meta = evt
+        elif t == "search":
+            search_evt = evt
+        elif t == "reasoning":
+            reason.append(evt["text"])
+        elif t == "delta":
+            acc.append(evt["text"])
+        elif t == "done":
+            done_evt = evt
+        elif t == "end":
+            break
+
+check("meta 带当前时间", bool(meta and meta.get("time")), (meta or {}).get("time", ""))
+check("meta 带联网能力标记", bool(meta and "web" in meta), str((meta or {}).get("web")))
+check("联网检索有返回", bool(search_evt and search_evt.get("used")),
+      f"{(search_evt or {}).get('message')} 条数={len((search_evt or {}).get('results') or [])}")
+if search_evt and search_evt.get("results"):
+    s0 = search_evt["results"][0]
+    check("来源结构完整", bool(s0.get("url")) and bool(s0.get("title")),
+          f"[{s0.get('site')}] {(s0.get('title') or '')[:30]}")
+check("思维链有内容（可展开）", len("".join(reason)) > 0, f"{len(''.join(reason))} 字")
+check("done 回报思维链字数", bool(done_evt and done_evt.get("reasoning_chars", 0) > 0),
+      f"{(done_evt or {}).get('reasoning_chars')}")
+answer = "".join(acc)
+check("长输出未被截断", len(answer) > 400, f"正文 {len(answer)} 字")
+
+from backend.config import MAX_TOKENS_MAP as _MT
+check("tutor 输出上限已放宽", _MT["tutor"] >= 8192, f"max_tokens={_MT['tutor']}")
+
+print("19. 联网判定的纯函数逻辑（不发真实请求，省钱）")
+from backend.services.websearch import build_search_query, should_search
+
+check("时效性问题会触发联网", should_search("2026年广东高考最新政策变化"))
+check("纯公式推导不触发联网", not should_search("二次函数顶点公式怎么推导"))
+check("纯定义不触发联网", not should_search("什么是导数"))
+check("短消息不触发联网", not should_search("不会"))
+q = build_search_query("  请问 数学最新大纲有什么变化 ", "数学")
+check("搜索词清洗 + 补科目语境", "数学" in q and "请问" not in q, q[:40])
+
+from backend.config import settings as _cfg
+_cfg.set_search_enabled(False)
+check("可以关闭联网", _cfg.search_enabled is False)
+_cfg.set_search_enabled(True)
+check("可以重新开启", _cfg.search_enabled is True)
 
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")

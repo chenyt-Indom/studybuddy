@@ -23,12 +23,14 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 class ChatIn(BaseModel):
     subject: str = "math"
     message: str
+    # True 强制联网 / False 强制不联网 / None 自动判断
+    use_web: bool | None = None
 
 
 @router.post("/stream")
 async def chat_stream(body: ChatIn, user: User = Depends(current_user)):
     async def gen():
-        async for evt in stream_reply(user.id, body.subject, body.message):
+        async for evt in stream_reply(user.id, body.subject, body.message, body.use_web):
             yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
         yield "data: {\"type\": \"end\"}\n\n"
 
@@ -92,6 +94,8 @@ def get_messages(conversation_id: int, user: User = Depends(current_user),
     ).all()
     return [
         {"id": m.id, "role": m.role, "content": m.content,
+         "reasoning": m.reasoning,
+         "sources": json.loads(m.sources) if m.sources else [],
          "created_at": m.created_at.isoformat()}
         for m in rows
     ]

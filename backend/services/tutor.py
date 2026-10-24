@@ -41,6 +41,9 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
         )
     )
 
+    # ① 时间感知：放最前面，模型对开头最敏感
+    parts.append(ctx.get("time_line") or _default_time_line())
+
     # ② 认知风格 → 讲解方式
     style = ctx.get("primary_style")
     if style and STYLE_HINT.get(style):
@@ -84,9 +87,29 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
         mem = "\n".join(f"- [{m['type']}] {m['content']}" for m in mems)
         parts.append(f"【历史观察】\n{mem}")
 
-    # ⑧ 输出要求
+    # ⑧ 联网检索到的实时资料（有才加）
+    search_ctx = ctx.get("search_context")
+    if search_ctx:
+        parts.append(
+            "【联网检索结果】以下是刚刚实时检索到的网页摘要，"
+            "回答涉及时效性内容时**优先以此为准**，并在句末用 [1] [2] 这样的编号标注来源。\n"
+            "如果资料与你的记忆冲突，以资料为准；如果资料不足以回答，明确说明缺什么。\n\n"
+            f"{search_ctx}"
+        )
+
+    # ⑨ 输出要求
     parts.append(OUTPUT_REQUIREMENTS)
     return "\n\n".join(parts)
+
+
+def _default_time_line() -> str:
+    from ..config import now_context
+
+    c = now_context()
+    return (
+        f"【当前时间】现在是 {c['display']}（北京时间）。"
+        "回答时效性问题时以此时间为准。"
+    )
 
 
 def style_hint_of(profile: UserProfile) -> str:

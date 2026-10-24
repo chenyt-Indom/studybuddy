@@ -35,6 +35,10 @@ class ClearKeyIn(BaseModel):
     provider: str | None = None
 
 
+class SearchIn(BaseModel):
+    enabled: bool
+
+
 def _payload() -> dict:
     return {
         "provider": settings.provider,
@@ -43,6 +47,13 @@ def _payload() -> dict:
         "mode": "live" if settings.configured else "mock",
         "demo_model": "deepseek-flash",
         "secure_storage": settings.key_protected,
+        "search": {
+            "supported": settings.search_supported,
+            "enabled": settings.search_enabled,
+            # 官方计费：5 元 / 1000 次，只在有结果时计费
+            "price": "5 元 / 1000 次",
+            "endpoint": "/v1/tools/search",
+        },
         "secure_note": (
             "API Key 已用 Windows DPAPI 加密，绑定当前 Windows 用户与本机；"
             "拷到别的机器或别的用户下解不开。"
@@ -50,6 +61,13 @@ def _payload() -> dict:
             else "⚠️ 当前系统不支持 DPAPI，Key 以明文存储。建议设置文件目录权限。"
         ),
     }
+
+
+@router.post("/search")
+def set_search(body: SearchIn, user: User = Depends(current_user)):
+    """开启 / 关闭联网搜索。关闭后对话不再触发检索，也就不产生搜索费用。"""
+    settings.set_search_enabled(body.enabled)
+    return {"ok": True, **_payload()}
 
 
 @router.get("/config")

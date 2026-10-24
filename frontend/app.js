@@ -35,6 +35,7 @@ const state = {
   subject: 'math',
   sysConfig: null,
   chatMeta: null,
+  useWeb: localStorage.getItem('sb_useweb') || 'auto',
   reviewSel: null
 };
 
@@ -187,7 +188,14 @@ async function viewChat(root) {
   <div class="page-h">
     <div><h2>学科对话</h2>
       <div class="desc">每个科目一条独立对话，永久保留 · 右侧是本次回答实际用到的画像与记忆</div></div>
-    <button class="btn" id="refreshStyle">重算我的认知风格</button>
+    <div class="row" style="gap:8px">
+      <select id="webMode" style="width:auto" title="联网搜索（DeepSeek 官方 Search，5 元/1000 次）">
+        <option value="auto">联网：自动判断</option>
+        <option value="on">联网：强制开启</option>
+        <option value="off">联网：关闭</option>
+      </select>
+      <button class="btn" id="refreshStyle">重算我的认知风格</button>
+    </div>
   </div>
   <div class="chat-layout">
     <div class="chat-main">
@@ -209,6 +217,8 @@ async function viewChat(root) {
   $$('.subjects button').forEach(b => b.onclick = () => {
     state.subject = b.dataset.s;
     $$('.subjects button').forEach(x => x.classList.toggle('on', x.dataset.s === state.subject));
+    const mb = $('#msgs');
+    if (mb) delete mb.dataset.live;  // 切科目要重新渲染历史
     loadHistory();
   });
   $('#refreshStyle').onclick = async () => {
@@ -217,12 +227,23 @@ async function viewChat(root) {
       toast(`认知风格：${r.style.primary || '样本不足'}（置信度 ${(r.style.confidence * 100).toFixed(0)}%）`);
     } catch (e) { toast(e.message, true); }
   };
+  const wm = $('#webMode');
+  wm.value = state.useWeb;
+  wm.onchange = () => { state.useWeb = wm.value; localStorage.setItem('sb_useweb', wm.value); };
   const inp = $('#inp');
   inp.onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
   $('#send').onclick = sendMessage;
+  // 历史没加载完之前禁用输入：否则用户手快先发，历史回来会把新消息覆盖掉
+  inp.disabled = true;
+  $('#send').disabled = true;
   await loadHistory();
+  if ($('#inp')) {
+    $('#inp').disabled = false;
+    $('#send').disabled = false;
+    $('#inp').focus();
+  }
 }
 
 async function loadHistory() {
@@ -231,6 +252,8 @@ async function loadHistory() {
   box.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const convs = await api.get('/api/chat/conversations');
+    // 加载期间用户已经发过消息 → 放弃这次渲染，别把新消息覆盖掉
+    if (box.dataset.live === '1' || !$('#msgs')) return;
     const conv = convs.find(c => c.subject === state.subject);
     if (!conv) {
       box.innerHTML = `<div class="empty">「${SUBJ_NAME[state.subject]}」还没有对话<br>直接在下面提问就会自动建立</div>`;
@@ -241,7 +264,15 @@ async function loadHistory() {
       box.innerHTML = `<div class="empty">「${SUBJ_NAME[state.subject]}」还没有对话<br>直接在下面提问就会自动建立</div>`;
       return;
     }
-    box.innerHTML = msgs.map(m => bubble(m.role, m.content)).join('');
+    box.innerHTML = msgs.map(historyBubble).join('');
+    // 思维链原文用 textContent 注入，避免转义/HTML 注入
+    const bots = $$('.msg.bot', box);
+    const datas = msgs.filter(m => m.role !== 'user');
+    bots.forEach((n, i) => {
+      const pre = $('.think-body', n);
+      if (pre && datas[i] && datas[i].reasoning) pre.textContent = datas[i].reasoning;
+    });
+    hydrateThink(box);
     box.scrollTop = box.scrollHeight;
   } catch (e) {
     box.innerHTML = `<div class="empty">读取失败：${h(e.message)}</div>`;
@@ -256,6 +287,103 @@ function bubble(role, content) {
   </div>`;
 }
 
+/* 历史消息：带思维链折叠 + 来源列表 */
+function historyBubble(m) {
+  if (m.role === 'user') return bubble('user', m.content);
+  const src = (m.sources && m.sources.length)
+    ? `<div class="sources"><div class="src-title">参考来源</div>${m.sources.map((s, i) =>
+        `<a class="src" href="${h(s.url)}" target="_blank" rel="noopener">
+           <span class="idx">${i + 1}</span>
+           <span class="st">${h(s.title || s.url)}</span>
+           <span class="sm">${h(s.site || '')}${s.date ? ' · ' + h(s.date) : ''}</span>
+         </a>`).join('')}</div>`
+    : '';
+  return `<div class="msg bot">
+    <div class="av">SB</div>
+    <div class="bubble">
+      ${m.reasoning ? `<div class="think">
+        <button class="think-head" type="button">
+          <span class="ico">🧠</span> 深度思考过程 · <span class="len">${m.reasoning.length} 字</span>
+          <span class="chev">展开</span>
+        </button>
+        <pre class="think-body" hidden></pre>
+      </div>` : ''}
+      <div class="ans">${md(m.content)}</div>
+      ${src}
+    </div>
+  </div>`;
+}
+
+/* 历史里的思维链需要 post-DOM 注入文本，避免 HTML 转义踩坑 */
+function hydrateThink(root) {
+  $$('.think', root).forEach(t => {
+    const body = $('.think-body', t);
+    const head = $('.think-head', t);
+    const chev = $('.chev', t);
+    if (!body || !head) return;
+    // 思维链原文存在 data 里会有转义问题，改用从 ans 之外的结构推断：
+    // 这里只绑交互，文本由调用方通过 setThinkText 注入
+    head.onclick = () => {
+      const open = body.hidden;
+      body.hidden = !open;
+      chev.textContent = open ? '收起' : '展开';
+    };
+  });
+}
+
+/* 创建一个流式机器人气泡，返回各区域句柄 */
+function createBotBubble(box) {
+  const id = 'b' + Date.now() + Math.floor(Math.random() * 1000);
+  box.insertAdjacentHTML('beforeend', `
+    <div class="msg bot" id="${id}">
+      <div class="av">SB</div>
+      <div class="bubble">
+        <div class="srcline" hidden></div>
+        <div class="think" hidden>
+          <button class="think-head" type="button">
+            <span class="ico">🧠</span> 深度思考过程 · <span class="len">0 字</span>
+            <span class="chev">展开</span>
+          </button>
+          <pre class="think-body" hidden></pre>
+        </div>
+        <div class="ans"><span class="typing"><i></i><i></i><i></i></span></div>
+        <div class="sources" hidden></div>
+      </div>
+    </div>`);
+  const root = document.getElementById(id);
+  const think = $('.think', root), body = $('.think-body', root);
+  const chev = $('.chev', root);
+  const handle = {
+    root,
+    ans: $('.ans', root),
+    think, body, chev,
+    len: $('.len', root),
+    srcline: $('.srcline', root),
+    sources: $('.sources', root),
+    reasoning: '',
+    answer: '',
+    sourcesData: []
+  };
+  $('.think-head', root).onclick = () => {
+    const open = body.hidden;
+    body.hidden = !open;
+    chev.textContent = open ? '收起' : '展开';
+    if (open) body.scrollTop = body.scrollHeight;
+  };
+  return handle;
+}
+
+function renderSources(el, list) {
+  if (!list || !list.length) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `<div class="src-title">参考来源（${list.length}）</div>` +
+    list.map((s, i) => `<a class="src" href="${h(s.url)}" target="_blank" rel="noopener">
+      <span class="idx">${i + 1}</span>
+      <span class="st">${h(s.title || s.url)}</span>
+      <span class="sm">${h(s.site || '')}${s.date ? ' · ' + h(s.date) : ''}</span>
+    </a>`).join('');
+}
+
 async function sendMessage() {
   const inp = $('#inp'), box = $('#msgs'), btn = $('#send');
   const text = inp.value.trim();
@@ -263,21 +391,19 @@ async function sendMessage() {
   inp.value = ''; btn.disabled = true;
 
   if (box.querySelector('.empty')) box.innerHTML = '';
+  box.dataset.live = '1';   // 标记：这里已经有实时消息，别再被历史渲染覆盖
   box.insertAdjacentHTML('beforeend', bubble('user', text));
-  const botId = 'b' + Date.now();
-  box.insertAdjacentHTML('beforeend', `<div class="msg bot" id="${botId}">
-    <div class="av">SB</div><div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div></div>`);
+  const hd = createBotBubble(box);
   box.scrollTop = box.scrollHeight;
 
-  const bubbleEl = $('#' + botId + ' .bubble');
-  let acc = '';
-  let reasonChars = 0;
+  const useWeb = state.useWeb === 'auto' ? null : (state.useWeb === 'on');
+  const keepBottom = () => { box.scrollTop = box.scrollHeight; };
 
   try {
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.token },
-      body: JSON.stringify({ subject: state.subject, message: text })
+      body: JSON.stringify({ subject: state.subject, message: text, use_web: useWeb })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
@@ -295,28 +421,60 @@ async function sendMessage() {
         if (!line.startsWith('data:')) continue;
         let evt;
         try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+
         if (evt.type === 'meta') {
           state.chatMeta = evt;
           renderCtx(evt);
-        } else if (evt.type === 'reasoning') {
-          // DeepSeek 深度思考：思维链不混进正文，只做一个轻提示
-          reasonChars += (evt.text || '').length;
-          if (!acc) {
-            bubbleEl.innerHTML = `<span class="hint">深度思考中…已想 ${reasonChars} 字</span>`;
+
+        } else if (evt.type === 'status') {
+          hd.srcline.hidden = false;
+          hd.srcline.innerHTML = `<span class="spin"></span> ${h(evt.text)}`;
+          keepBottom();
+
+        } else if (evt.type === 'search') {
+          hd.srcline.hidden = false;
+          hd.sourcesData = evt.results || [];
+          if (evt.used) {
+            hd.srcline.innerHTML = `<span class="pill ok">🌐 ${h(evt.message)}</span>
+              <span class="hint">查询：${h(evt.query)}</span>`;
+            renderSources(hd.sources, hd.sourcesData);
+          } else {
+            hd.srcline.innerHTML = `<span class="pill warn">未联网</span>
+              <span class="hint">${h(evt.message || '')}</span>`;
           }
+          keepBottom();
+
+        } else if (evt.type === 'reasoning') {
+          hd.think.hidden = false;
+          hd.reasoning += evt.text || '';
+          hd.len.textContent = `${hd.reasoning.length} 字`;
+          hd.body.textContent = hd.reasoning;
+          if (!hd.body.hidden) hd.body.scrollTop = hd.body.scrollHeight;
+          if (!hd.answer) {
+            hd.ans.innerHTML = `<span class="hint">深度思考中…（点上方「展开」可看推理过程）</span>`;
+          }
+          keepBottom();
+
         } else if (evt.type === 'delta') {
-          acc += evt.text;
-          bubbleEl.innerHTML = md(acc);
-          box.scrollTop = box.scrollHeight;
+          hd.answer += evt.text;
+          hd.ans.innerHTML = md(hd.answer);
+          keepBottom();
+
         } else if (evt.type === 'error') {
-          bubbleEl.innerHTML = `<span style="color:#b91c1c">${h(evt.message)}</span>`;
+          hd.ans.innerHTML = `<span style="color:#b91c1c">${h(evt.message)}</span>`;
+
+        } else if (evt.type === 'done') {
+          if (!hd.answer) hd.ans.innerHTML = '<span class="hint">（没有内容返回）</span>';
+          if (evt.truncated) {
+            hd.ans.insertAdjacentHTML('beforeend',
+              `<div class="hint" style="color:#b45309;margin-top:8px">
+                ⚠️ 本次回复异常短，可能被截断。可以在设置里换更省事的问法，或分多次提问。</div>`);
+          }
         }
       }
     }
-    if (acc) bubbleEl.innerHTML = md(acc);
-    else bubbleEl.innerHTML = '<span class="hint">（没有内容返回）</span>';
   } catch (e) {
-    bubbleEl.innerHTML = `<span style="color:#b91c1c">请求失败：${h(e.message)}</span>`;
+    hd.ans.innerHTML = `<span style="color:#b91c1c">请求失败：${h(e.message)}</span>`;
   } finally {
     btn.disabled = false;
     inp.focus();

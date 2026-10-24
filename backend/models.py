@@ -97,6 +97,10 @@ class Message(Base):
     conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)  # user / assistant / system
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # DeepSeek 思考模式的思维链。存下来是为了回翻历史时还能展开看
+    reasoning: Mapped[str | None] = mapped_column(Text, default=None)
+    # 本次回答引用的网页来源（JSON 数组）
+    sources: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
