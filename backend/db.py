@@ -53,6 +53,7 @@ def _ensure_columns() -> None:
         "messages": {
             "reasoning": "TEXT",
             "sources": "TEXT",
+            "attachments": "TEXT",
         },
         "memories": {
             "scope": "VARCHAR(16) DEFAULT 'subject'",

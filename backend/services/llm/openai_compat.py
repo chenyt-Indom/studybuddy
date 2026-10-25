@@ -134,6 +134,9 @@ class OpenAICompatProvider(LLMProvider):
                     text = delta.get("content")
                     if text:
                         yield {"type": "content", "text": text}
+                    fr = choices[0].get("finish_reason")
+                    if fr:
+                        yield {"type": "finish", "reason": fr}
 
     async def list_models(self) -> list[str]:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -205,7 +208,14 @@ class MockProvider(LLMProvider):
         user_text = ""
         for m in reversed(messages):
             if m.get("role") == "user":
-                user_text = (m.get("content") or "").strip()
+                c = m.get("content")
+                if isinstance(c, list):   # 多模态消息（图片）：只取文字部分
+                    user_text = " ".join(
+                        p.get("text", "") for p in c if isinstance(p, dict)
+                        and p.get("type") == "text"
+                    ).strip()
+                else:
+                    user_text = (c or "").strip()
                 break
         text = (
             "【离线演示模式】还没配置 API Key，以下为占位回复。\n\n"

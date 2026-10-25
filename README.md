@@ -4,7 +4,7 @@
 >   
 > 这个能力叫**专精化（Specialization）**——不是回答「问题」，而是回答「你问这个问题的这个人」。
 
-![状态](https://img.shields.io/badge/status-v0.1.6%20%E5%88%9D%E7%A8%BF-brightgreen)
+![状态](https://img.shields.io/badge/status-v0.1.7%20%E5%88%9D%E7%A8%BF-brightgreen)
 
 ![发布](https://img.shields.io/badge/release-v0.1.0--draft-orange)
 
@@ -18,7 +18,7 @@
 
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
-> **当前版本：v0.1.6 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
+> **当前版本：v0.1.7 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
 >   
 > 这是按方案落地的**第一版可运行骨架**：三条主线（专精化 / 遗忘曲线 / 跨科目）已跑通，
 >   
@@ -562,6 +562,7 @@ python -m uvicorn backend.main:app --reload --port 8787
 | **思维链可展开** | ✅ | `reasoning_content` 单独推流，折叠块实时更新、可展开收起，存库可回翻 |
 | **长输出** | ✅ | tutor 上限 2048 → 16384，按场景分级（这是长讲解被截断的根因） |
 | SSE 流式对话       | ✅  | 含 `X-Accel-Buffering: no`；思维链 `reasoning_content` 单独推前端做「深度思考中」提示                           |
+| **题目图片上传** | ✅ | 支持选图/粘贴/拖拽，一条最多 4 张；多模态直传模型（`deepseek-flash` 支持 image）；自动先复述题目再讲，图片模糊会说看不清而不是猜 |
 | **API Key 保密** | ✅  | 前端输入一次 → DPAPI 加密落盘 → 接口只回掩码 → 浏览器不直连模型；8 项安全验收覆盖                                           |
 | **专精化引擎**      | ✅  | 四维画像、认知风格推断（视觉/语言/动手/逻辑）、心理状态、讲解风格自适应                                                       |
 | **遗忘曲线引擎**     | ✅  | SM-2 三参数（EF/interval/repetitions）、指数衰减记忆强度、三级优先级队列、复习卡生成                                    |
@@ -701,6 +702,36 @@ node tests\dom_test.cjs
 ---
 
 ## 十二、版本记录
+
+### v0.1.7 · 对话支持上传题目图片（2026-10-25）
+
+用户需求：聊天框能上传图片，用来学习和讲解题目。
+
+**先查清能力，再决定怎么做（关键判断）**
+- 实测官方 `GET /v1/models`：`deepseek-flash` 的 `input_modalities = ["text","image"]`，
+  `deepseek-v4-pro` **只有 text**。→ 图片只对 flash 有效，不能假装所有模型都能看。
+- 因此加了能力探测 `services/llm/vision.py`（现查 + 缓存 10 分钟），
+  换模型后自动失效重算；不支持时**明确告诉他换模型**，而不是让请求 400 后一脸茫然。
+- 也试过"本地 OCR 提文字"这条路，放弃：题目里全是公式与手写，OCR 出来是废的，
+  而且要多背一个大依赖。**能原生看图就别绕**。
+
+**链路**
+- `POST /api/chat/attachments` 上传（只落本机 `data/uploads/chat/`，文件名带 `u{user_id}_` 前缀）
+- `GET /api/chat/attachments/{name}` 读取，越权一律「图片不存在」，不区分是否存在（不给探测）
+- 校验看**魔数**不看扩展名：`a.txt` 改名成 `a.png` 会被挡掉；单张 8MB 上限
+- `messages` 新增 `attachments` 列（JSON），历史回翻还能看到当时传的图
+- 组装消息时只有**最后一条用户消息**带图；另外补上最近一条带图的提问，
+  这样追问（"那第二步为什么这么算"）时模型还看得到原题 —— 只补一条，避免 token 越滚越大
+- Prompt 新增【题目图片】段：**先复述题目让学生确认 → 再讲 → 看不清就说看不清，不许猜数字**
+- 顺手修：`truncated` 改看官方 `finish_reason == "length"`。
+  原来只看字数 <40，答「红色」这种极短正确回答会被误报成「疑似截断」
+
+**前端**
+- 输入区加图片按钮（SVG 图标）+ **粘贴**（Ctrl+V 直接贴截图）+ **拖拽**（整块对话区高亮）
+- 缩略图预览、可单张删除、上传中转圈；只有图片没有文字也能发（自动补"请讲解这道题"）
+- 气泡里显示图片、点击放大（lightbox）；超 4 张或超 8MB 给明确提示而不是静默失败
+
+测试：后端 105/105、前端 37/37（新增 8 项 + 5 项，含越权读取、伪装图片、带图真调模型）
 
 ### v0.1.6 · 修「教材切不过去」（2026-10-25）
 

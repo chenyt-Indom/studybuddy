@@ -18,6 +18,8 @@ from ..db import get_db
 from ..deps import current_user
 from ..models import Memory, User
 from ..services.llm import get_provider
+from ..services.llm.vision import forget as forget_vision
+from ..services.llm.vision import image_support
 from ..services.secrets_store import scrub
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -75,6 +77,13 @@ def read_config(user: User = Depends(current_user)):
     return _payload()
 
 
+@router.get("/vision")
+async def vision_capability(user: User = Depends(current_user)):
+    """当前模型能不能看图（对话上传图片用）。现查官方 /models 的 input_modalities。"""
+    ok, note = await image_support()
+    return {"supported": ok, "model": settings.model, "note": note}
+
+
 @router.post("/config")
 def write_config(body: ConfigIn, user: User = Depends(current_user)):
     if body.provider and body.provider not in PROVIDERS:
@@ -93,6 +102,7 @@ def write_config(body: ConfigIn, user: User = Depends(current_user)):
         patch["providers"][target] = slot
     save_settings(patch)
     settings.reload()
+    forget_vision()      # 换模型/换 Key 后「能不能看图」的结论要重算
 
     # 2) 敏感配置：写加密存储后立刻从内存变量丢弃
     if body.api_key is not None:
@@ -112,6 +122,7 @@ def clear_key(body: ClearKeyIn, user: User = Depends(current_user)):
     if target not in PROVIDERS:
         return {"ok": False, "message": "未知供应商"}
     settings.secrets.clear(target)
+    forget_vision()
     return {"ok": True, **_payload()}
 
 

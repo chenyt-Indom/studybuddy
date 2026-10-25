@@ -164,6 +164,11 @@ function renderApp() {
     route();
   });
   refreshMode();
+  // 图片点开看大图（全局委托一次，避免每个气泡重复绑）
+  document.addEventListener('click', (e) => {
+    const img = e.target && e.target.closest && e.target.closest('.bubble-imgs img');
+    if (img) openLightbox(img.getAttribute('src'));
+  });
   route();
 }
 
@@ -207,9 +212,20 @@ async function viewChat(root) {
       </div>
       <div class="msgs" id="msgs"><div class="empty">选择一个科目，开始提问</div></div>
       <div class="composer">
-        <textarea id="inp" placeholder="例如：二次函数的顶点怎么求？我上次配方法错了…（Enter 发送，Shift+Enter 换行）"></textarea>
-        <button class="btn primary" id="send">发送</button>
+        <div class="attach-bar" id="attachBar" hidden></div>
+        <div class="composer-row">
+          <button class="btn icon" id="pickImg" type="button"
+                  title="上传题目图片（也可以直接粘贴或把图片拖进来）"
+                  aria-label="上传题目图片"><svg width="17" height="17" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" />
+                  <circle cx="8.6" cy="8.6" r="1.6" /><path d="M21 15.5l-4.6-4.6L5.6 21" /></svg></button>
+          <textarea id="inp" placeholder="例如：二次函数的顶点怎么求？我上次配方法错了…（Enter 发送，Shift+Enter 换行；题目不会做就拍图上传）"></textarea>
+          <button class="btn primary" id="send">发送</button>
+        </div>
+        <div class="hint" id="visionHint" hidden></div>
       </div>
+      <input type="file" id="imgFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden />
     </div>
     <aside class="ctx" id="ctx">
       <h4>本次回答的上下文</h4>
@@ -238,6 +254,47 @@ async function viewChat(root) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
   $('#send').onclick = sendMessage;
+
+  // ---------- 图片：按钮 / 粘贴 / 拖拽 ----------
+  pendingImgs = [];
+  renderAttachBar();
+  $('#pickImg').onclick = () => $('#imgFile').click();
+  $('#imgFile').onchange = async (e) => {
+    await addImages(e.target.files);
+    e.target.value = '';        // 清空，才能再选同一张
+  };
+  inp.onpaste = (e) => {
+    const files = Array.from((e.clipboardData && e.clipboardData.files) || [])
+      .filter(f => String(f.type).startsWith('image/'));
+    if (files.length) { e.preventDefault(); addImages(files); }
+  };
+  const main = $('.chat-main');
+  if (main) {
+    main.addEventListener('dragover', (e) => { e.preventDefault(); main.classList.add('dragging'); });
+    main.addEventListener('dragleave', () => main.classList.remove('dragging'));
+    main.addEventListener('drop', (e) => {
+      e.preventDefault();
+      main.classList.remove('dragging');
+      addImages(e.dataTransfer && e.dataTransfer.files);
+    });
+  }
+
+  // 当前模型能不能看图：不能就把按钮标灰 + 说明原因，别让用户白传一张
+  const checkVision = async () => {
+    try {
+      const v = await api.get('/api/system/vision');
+      if (!$('#pickImg')) return;
+      if (!v.supported) {
+        const b = $('#pickImg'), hint = $('#visionHint');
+        if (b) { b.disabled = true; b.title = v.note || '当前模型不支持图片'; }
+        if (hint) {
+          hint.hidden = false;
+          hint.textContent = '⚠️ ' + (v.note || `当前模型 ${v.model} 不支持看图`);
+        }
+      }
+    } catch (e) { /* 探测失败不挡路，真不支持时发出去会报错 */ }
+  };
+  checkVision();
   // 历史没加载完之前禁用输入：否则用户手快先发，历史回来会把新消息覆盖掉
   inp.disabled = true;
   $('#send').disabled = true;
@@ -282,17 +339,94 @@ async function loadHistory() {
   }
 }
 
-function bubble(role, content) {
+function bubble(role, content, imgs) {
   const isUser = role === 'user';
+  // 图片放文字上方：题目截图先看到，再看自己写的疑问
+  const pics = (imgs && imgs.length)
+    ? `<div class="bubble-imgs">${imgs.map(u =>
+        `<img class="zoom" src="${h(u)}" alt="题目图片" loading="lazy" />`).join('')}</div>`
+    : '';
   return `<div class="msg ${isUser ? 'user' : 'bot'}">
     <div class="av">${isUser ? '我' : 'SB'}</div>
-    <div class="bubble">${isUser ? h(content).replace(/\n/g, '<br>') : md(content)}</div>
+    <div class="bubble">${pics}${isUser ? h(content).replace(/\n/g, '<br>') : md(content)}</div>
   </div>`;
 }
 
+/* ---------------- 聊天图片：选择 / 粘贴 / 拖拽 / 预览 ---------------- */
+let pendingImgs = [];   // 待发送：{id, url, preview, name, size, uploading}
+
+function renderAttachBar() {
+  const bar = $('#attachBar');
+  if (!bar) return;
+  if (!pendingImgs.length) {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    return;
+  }
+  bar.hidden = false;
+  bar.innerHTML = pendingImgs.map((im, i) => `
+    <div class="att-chip${im.uploading ? ' up' : ''}">
+      <img src="${h(im.preview || im.url)}" alt="" />
+      <button class="x" type="button" data-del="${i}" title="移除这张">×</button>
+      ${im.uploading ? '<span class="spin"></span>' : ''}
+    </div>`).join('') +
+    `<span class="hint">可继续粘贴/拖拽，最多 4 张 · 单张 8MB</span>`;
+  $$('#attachBar [data-del]').forEach(b => {
+    b.onclick = () => { pendingImgs.splice(+b.dataset.del, 1); renderAttachBar(); };
+  });
+}
+
+async function addImages(files) {
+  const list = Array.from(files || []).filter(f => f && String(f.type).startsWith('image/'));
+  if (!list.length) return;
+  if (pendingImgs.length + list.length > 4) {
+    toast('一条消息最多 4 张图片', true);
+    return;
+  }
+  for (const f of list) {
+    let preview = '';
+    try { preview = URL.createObjectURL(f); } catch (e) { preview = ''; }  // 老浏览器/测试环境没有就退化为不预览
+    const item = { name: f.name, preview, uploading: true };
+    pendingImgs.push(item);
+    renderAttachBar();
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      const res = await fetch('/api/chat/attachments', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + state.token }, body: fd
+      });
+      const r = await res.json().catch(() => ({}));
+      // 后端对"不是图片/太大"也是 200 + ok:false，必须显式判
+      if (!res.ok || !r.ok) throw new Error(r.message || r.detail || ('HTTP ' + res.status));
+      item.id = r.id; item.url = r.url; item.size = r.size; item.uploading = false;
+    } catch (e) {
+      const i = pendingImgs.indexOf(item);
+      if (i >= 0) pendingImgs.splice(i, 1);
+      toast(e.message, true);
+    }
+    renderAttachBar();
+  }
+}
+
+function openLightbox(src) {
+  let box = $('#lightbox');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'lightbox';
+    box.className = 'lightbox';
+    box.onclick = () => { box.className = 'lightbox'; };
+    document.body.appendChild(box);
+  }
+  box.innerHTML = `<img src="${h(src)}" alt="题目图片" />`;
+  box.className = 'lightbox on';
+}
+
+
 /* 历史消息：带思维链折叠 + 来源列表 */
 function historyBubble(m) {
-  if (m.role === 'user') return bubble('user', m.content);
+  if (m.role === 'user') {
+    return bubble('user', m.content, (m.attachments || []).map(a => a.url));
+  }
   const src = (m.sources && m.sources.length)
     ? `<div class="sources"><div class="src-title">参考来源</div>${m.sources.map((s, i) =>
         `<a class="src" href="${h(s.url)}" target="_blank" rel="noopener">
@@ -389,13 +523,23 @@ function renderSources(el, list) {
 
 async function sendMessage() {
   const inp = $('#inp'), box = $('#msgs'), btn = $('#send');
+  if (!inp || !box) return;
   const text = inp.value.trim();
-  if (!text) return;
+  const imgs = pendingImgs.filter(i => i.id && !i.uploading);
+  if (!text && !imgs.length) return;
+  if (pendingImgs.some(i => i.uploading)) {
+    toast('图片还在上传，稍等一下再发', true);
+    return;
+  }
   inp.value = ''; btn.disabled = true;
+  const sendUrls = imgs.map(i => i.url);
+  const sendIds = imgs.map(i => i.id);
+  pendingImgs = [];          // 图片已经跟着这条消息走了，预览立刻清空
+  renderAttachBar();
 
   if (box.querySelector('.empty')) box.innerHTML = '';
   box.dataset.live = '1';   // 标记：这里已经有实时消息，别再被历史渲染覆盖
-  box.insertAdjacentHTML('beforeend', bubble('user', text));
+  box.insertAdjacentHTML('beforeend', bubble('user', text, sendUrls));
   const hd = createBotBubble(box);
   box.scrollTop = box.scrollHeight;
 
@@ -406,7 +550,10 @@ async function sendMessage() {
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.token },
-      body: JSON.stringify({ subject: state.subject, message: text, use_web: useWeb })
+      body: JSON.stringify({
+        subject: state.subject, message: text, use_web: useWeb,
+        attachments: sendIds
+      })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
 

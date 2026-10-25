@@ -15,6 +15,24 @@ function check(name, cond, extra = '') {
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+/* 造一张纯色 PNG（不引入 PIL/sharp，测试要能离线跑） */
+function makePng(rgb = [220, 30, 30], w = 64, h = 64) {
+  const zlib = require('zlib');
+  const raw = Buffer.concat(Array.from({ length: h }, () =>
+    Buffer.concat([Buffer.from([0]), Buffer.concat(Array.from({ length: w },
+      () => Buffer.from(rgb)))])));
+  const chunk = (tag, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(tag, 'ascii'), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
 async function waitFor(fn, timeout = 8000, step = 120) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeout) {
@@ -72,6 +90,10 @@ async function waitFor(fn, timeout = 8000, step = 120) {
       window.fetch = (input, init) => nodeFetch(new URL(input, BASE), init);
       window.TextDecoder = TextDecoder;
       window.TextEncoder = TextEncoder;
+      // 上传图片用：jsdom 的 FormData/File 与 undici 不兼容，直接借 Node 的
+      window.FormData = FormData;
+      window.File = File;
+      window.Blob = Blob;
       window.Element.prototype.scrollIntoView = function () {};
       const errs = [];
       window.__errs = errs;
@@ -151,6 +173,32 @@ async function waitFor(fn, timeout = 8000, step = 120) {
 
   const ctxHtml = doc.querySelector('#ctx').textContent;
   check('右侧上下文面板更新', ctxHtml.includes('认知风格'), ctxHtml.slice(0, 40).replace(/\s+/g, ' '));
+
+  // 上传题目图片（学习/讲题场景的核心入口）
+  check('输入区有上传图片按钮', !!doc.querySelector('#pickImg'));
+  const pngFile = new window.File([makePng()], '题目.png', { type: 'image/png' });
+  const fileInput = doc.querySelector('#imgFile');
+  Object.defineProperty(fileInput, 'files', { value: [pngFile], configurable: true });
+  fileInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const chipOk = await waitFor(() => doc.querySelectorAll('.att-chip').length === 1, 15000);
+  check('选图后出现缩略图', chipOk);
+  await waitFor(() => doc.querySelector('.att-chip') &&
+    !doc.querySelector('.att-chip.up'), 20000);
+  doc.querySelector('#send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const imgSent = await waitFor(() => {
+    const imgs = doc.querySelectorAll('#msgs .msg.user .bubble-imgs img');
+    return imgs.length > 0;
+  }, 20000);
+  check('图片随消息发出去并渲染', imgSent,
+        imgSent ? doc.querySelector('#msgs .bubble-imgs img').getAttribute('src') : '无');
+  check('发完清空待发缩略图', doc.querySelectorAll('.att-chip').length === 0);
+  if (imgSent) {
+    doc.querySelector('#msgs .bubble-imgs img')
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await sleep(200);
+    check('点图片可放大', !!doc.querySelector('#lightbox.on'));
+    if (doc.querySelector('#lightbox')) doc.querySelector('#lightbox').className = 'lightbox';
+  }
 
   // 图表 SVG 是否真的产出
   const dashLink = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'dashboard');

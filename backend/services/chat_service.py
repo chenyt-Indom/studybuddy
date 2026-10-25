@@ -15,10 +15,12 @@ from sqlalchemy import desc, select
 from ..config import MAX_TOKENS_MAP, TEMPERATURE_MAP, now_context, settings
 from ..db import session_scope
 from ..models import Conversation, KpMastery, Message
+from . import attachments as attach
 from .cross_subject.graph import cross_hint
 from .forgetting.scheduler import check_review_in_chat, ensure_review_state
 from .kp import candidates, match_kp_codes
 from .llm import get_provider
+from .llm.vision import image_support
 from .memory.extractor import extract_memories, persist_memories
 from .memory.consolidate import build_doc_context, get_meta
 from .memory.recall import global_memories, recall
@@ -71,7 +73,23 @@ def history(db, conversation_id: int, limit: int = HISTORY_TURNS) -> list[dict]:
         .order_by(desc(Message.id))
         .limit(limit)
     ).all()
-    return [{"role": m.role, "content": m.content} for m in reversed(rows)]
+    out = []
+    for m in reversed(rows):
+        try:
+            atts = json.loads(m.attachments) if m.attachments else []
+        except Exception:
+            atts = []
+        out.append({"role": m.role, "content": m.content, "attachments": atts})
+    return out
+
+
+def _content_with_images(text: str, urls: list[str]) -> str | list[dict]:
+    """OpenAI 兼容的多模态消息体：纯文本时仍给字符串（省得模型不认数组）。"""
+    if not urls:
+        return text
+    return [{"type": "text", "text": text or "请看图片"} ] + [
+        {"type": "image_url", "image_url": {"url": u}} for u in urls
+    ]
 
 
 def build_context(db, user_id: int, subject_key: str, user_text: str) -> dict:
@@ -106,27 +124,68 @@ async def stream_reply(
     subject_key: str,
     user_text: str,
     use_web: bool | None = None,
+    attachments: list[str] | None = None,
 ) -> AsyncIterator[dict]:
     """SSE 数据流。事件类型：meta / status / search / reasoning / delta / error / done
 
     use_web: True 强制联网、False 强制不联网、None 交给启发式判断
+    attachments: 图片附件 id（题目截图/手写照片），最多 4 张
     """
     user_text = (user_text or "").strip()
-    if not user_text:
+    wanted = [a for a in (attachments or []) if a][: attach.MAX_IMAGES_PER_MSG]
+    if not user_text and not wanted:
         yield {"type": "error", "message": "空消息"}
         return
+
+    # 只认自己的图（resolve 会校验文件名里的 user_id），失效的静默丢掉
+    valid = [a for a in wanted if attach.resolve(user_id, a)]
+    image_urls = [u for u in (attach.data_url(user_id, a) for a in valid) if u]
+    # 只发图不打字也要能问：给一句默认问法，后续所有引擎（知识点/记忆/联网）都有字可用
+    display_text = user_text or "（见图片）请帮我讲解这道题"
+
+    img_blocked = ""
+    if image_urls:
+        ok, note = await image_support()
+        if not ok:
+            img_blocked = note or "当前模型不支持图片输入，请换用支持看图的模型"
 
     with session_scope() as db:
         conv = get_or_create_conversation(db, user_id, subject_key)
         conv_id = conv.id
-        user_msg = Message(conversation_id=conv_id, role="user", content=user_text)
+        user_msg = Message(
+            conversation_id=conv_id, role="user", content=display_text,
+            attachments=json.dumps(valid, ensure_ascii=False) if valid else None,
+        )
         db.add(user_msg)
         db.flush()
         user_msg_id = user_msg.id
         hist = history(db, conv_id)
-        ctx = build_context(db, user_id, subject_key, user_text)
+        ctx = build_context(db, user_id, subject_key, display_text)
         review_note = check_review_in_chat(db, user_id, subject_key)
         kp_hint = ctx.get("kp_hint") or []
+
+        # 本次消息带上图片；再往前找最近一条带图的提问补上，
+        # 这样追问（"那第二步为什么这么算"）时模型还看得到原题。
+        # 只补一条，避免每轮都重传导致 token 越滚越大。
+        prev_img = None
+        for m in reversed(hist[:-1][-6:]):
+            if m["role"] == "user" and m.get("attachments"):
+                prev_img = m
+                break
+        chat_msgs: list[dict] = []
+        for m in hist:
+            if m is hist[-1]:
+                chat_msgs.append({"role": "user",
+                                  "content": _content_with_images(display_text, image_urls)})
+                continue
+            urls: list[str] = []
+            if prev_img is not None and m is prev_img:
+                urls = [u for u in (attach.data_url(user_id, a)
+                                    for a in m.get("attachments") or []) if u]
+            chat_msgs.append({"role": m["role"],
+                              "content": _content_with_images(m["content"], urls)})
+
+    ctx["images"] = len(image_urls)
 
     # ---------- 时间感知 ----------
     tc = now_context()
@@ -139,7 +198,7 @@ async def stream_reply(
     elif use_web is False:
         do_search = False
     else:
-        do_search = can_search and should_search(user_text)
+        do_search = can_search and should_search(display_text)
 
     yield {
         "type": "meta",
@@ -162,9 +221,9 @@ async def stream_reply(
     # ---------- 联网检索（在拼 Prompt 之前，结果要进上下文）----------
     search_info: dict = {"used": False, "results": [], "query": "", "message": ""}
     if do_search:
-        q = build_search_query(user_text, SUBJECT_CN.get(subject_key, ""))
+        q = build_search_query(display_text, SUBJECT_CN.get(subject_key, ""))
         yield {"type": "status", "text": f"正在联网检索：{q}"}
-        res = await WebSearchClient().search(q, ori_question=user_text)
+        res = await WebSearchClient().search(q, ori_question=display_text)
         if res.get("ok") and res.get("results"):
             picked = res["results"][:WEB_SEARCH_COUNT]
             ctx["search_context"] = format_context(picked)
@@ -184,11 +243,21 @@ async def stream_reply(
         yield {"type": "search", **search_info}
 
     system_prompt = build_tutor_prompt(ctx, subject_key)
-    messages = [{"role": "system", "content": system_prompt}] + hist
+    messages = [{"role": "system", "content": system_prompt}] + chat_msgs
+
+    if img_blocked:
+        yield {"type": "error", "message": img_blocked}
+        with session_scope() as db:
+            db.add(Message(conversation_id=conv_id, role="assistant",
+                           content=f"（图片没能处理）{img_blocked}"))
+        return
+    if image_urls:
+        yield {"type": "status", "text": f"正在读图（{len(image_urls)} 张）并讲解…"}
 
     llm = get_provider()
     acc: list[str] = []
     reasoning: list[str] = []
+    finish_reason = ""
     try:
         async for evt in llm.stream(
             messages,
@@ -196,7 +265,11 @@ async def stream_reply(
             max_tokens=MAX_TOKENS_MAP["tutor"],
             scene="tutor",
         ):
-            if evt["type"] == "reasoning":
+            if evt["type"] == "finish":
+                # 以官方 finish_reason 为准判断是否被截断。
+                # 之前只看字数，答「红色」这种极短正确回答会被误报成"疑似截断"。
+                finish_reason = evt.get("reason") or ""
+            elif evt["type"] == "reasoning":
                 reasoning.append(evt["text"])
                 # 思维链原样推给前端，由前端折叠展示（可展开/收起）
                 yield {"type": "reasoning", "text": evt["text"]}
@@ -221,7 +294,7 @@ async def stream_reply(
 
     # ⑥ 异步后处理：抽取记忆 / 更新掌握度 / 排复习 / 重算风格
     asyncio.create_task(
-        _post_process(user_id, subject_key, conv_id, user_text, answer, kp_hint,
+        _post_process(user_id, subject_key, conv_id, display_text, answer, kp_hint,
                       user_msg_id)
     )
 
@@ -246,7 +319,8 @@ async def stream_reply(
         "conversation_id": conv_id,
         "answer_chars": len(answer),
         "reasoning_chars": len(reason_text),
-        "truncated": len(answer) < 40,  # 粗判：几乎没内容，多半是被截断
+        # 有 finish_reason 就信它；拿不到才退回字数粗判
+        "truncated": (finish_reason == "length") if finish_reason else (len(answer) < 40),
     }
 
 

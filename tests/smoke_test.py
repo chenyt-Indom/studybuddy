@@ -478,6 +478,77 @@ check("刚导入的册次可再次切回", ok3.get("ok") is True, ok3.get("title
 # 切回内置第一册，避免影响后续用例
 c.post("/api/textbook/select", params={"subject": "math", "code": codes[0]})
 
+print("23. 对话图片：上传 / 校验 / 越权 / 带图对话")
+import struct  # noqa: E402
+import zlib    # noqa: E402
+
+
+def _png(rgb=(220, 30, 30), w=64, h=64):
+    """纯 stdlib 造一张 PNG —— 测试不想为了跑起来再装 PIL。"""
+    raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+
+    def ck(tag, data):
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + ck(b"IHDR", ihdr)
+            + ck(b"IDAT", zlib.compress(raw, 9)) + ck(b"IEND", b""))
+
+
+up = c.post("/api/chat/attachments",
+            files={"file": ("题目.png", _png(), "image/png")}).json()
+check("可上传题目图片", up.get("ok") is True and str(up.get("id", "")).startswith("u"),
+      f"{up.get('id')} {up.get('size')}B")
+aid = up.get("id") or ""
+got = c.get(f"/api/chat/attachments/{aid}")
+check("图片能读回且是图片类型",
+      got.status_code == 200 and got.headers.get("content-type", "").startswith("image/"),
+      f"{len(got.content)}B")
+bad = c.post("/api/chat/attachments",
+             files={"file": ("x.png", b"this is not an image", "image/png")}).json()
+check("把别的文件改名成 png 会被挡下", bad.get("ok") is False, bad.get("message"))
+
+# 越权：别的用户读不到我的图
+other = httpx.Client(base_url=BASE, timeout=30)
+oname = "other_%d" % (int(time.time()) % 1000000)
+otok = other.post("/api/auth/register",
+                  json={"username": oname, "password": "123456"}).json()["token"]
+orow = other.get(f"/api/chat/attachments/{aid}",
+                 headers={"Authorization": f"Bearer {otok}"}).json()
+check("别的用户读不到我的图", orow.get("ok") is False or orow.get("detail"), str(orow)[:60])
+
+# 当前模型能不能看图（官方 /models 的 input_modalities）
+vis = c.get("/api/system/vision").json()
+check("能力接口说明当前模型是否支持图片", "supported" in vis, f"{vis.get('model')} → {vis.get('supported')}")
+
+# 带图对话：真调一次模型，确认图片真的送到了。
+# 故意不打字 —— 顺带验证「只发图也能问」会自动补一句问法
+ans, err, status_texts = [], "", []
+with c.stream("POST", "/api/chat/stream",
+              json={"subject": "math", "message": "", "attachments": [aid]}) as resp:
+    for line in resp.iter_lines():
+        if not line.startswith("data:"):
+            continue
+        evt = json.loads(line[5:].strip())
+        if evt.get("type") == "delta":
+            ans.append(evt["text"])
+        elif evt.get("type") == "status":
+            status_texts.append(evt.get("text", ""))
+        elif evt.get("type") == "error":
+            err = evt.get("message", "")
+check("只发图不打字也能得到回答", not err and bool("".join(ans).strip()),
+      err or f"{''.join(ans).strip()[:20]} | 状态：{status_texts[:2]}")
+
+conv = [x for x in c.get("/api/chat/conversations").json() if x["subject"] == "math"][0]
+hmsgs = c.get("/api/chat/messages", params={"conversation_id": conv["id"]}).json()
+huser = [m for m in hmsgs if m["role"] == "user"][-1]
+check("历史消息里带着图片附件",
+      bool(huser.get("attachments")) and huser["attachments"][0]["id"] == aid,
+      str(huser.get("attachments"))[:80])
+check("空消息自动补问法入库", "图片" in (huser.get("content") or ""),
+      (huser.get("content") or "")[:24])
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

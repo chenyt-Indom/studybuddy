@@ -101,6 +101,8 @@ class Message(Base):
     reasoning: Mapped[str | None] = mapped_column(Text, default=None)
     # 本次回答引用的网页来源（JSON 数组）
     sources: Mapped[str | None] = mapped_column(Text, default=None)
+    # 用户上传的图片附件（JSON 数组，元素为附件 id，见 services/attachments.py）
+    attachments: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
