@@ -4,7 +4,7 @@
 >   
 > 这个能力叫**专精化（Specialization）**——不是回答「问题」，而是回答「你问这个问题的这个人」。
 
-![状态](https://img.shields.io/badge/status-v0.1.7%20%E5%88%9D%E7%A8%BF-brightgreen)
+![状态](https://img.shields.io/badge/status-v0.1.8%20%E5%88%9D%E7%A8%BF-brightgreen)
 
 ![发布](https://img.shields.io/badge/release-v0.1.0--draft-orange)
 
@@ -18,7 +18,7 @@
 
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
-> **当前版本：v0.1.7 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
+> **当前版本：v0.1.8 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
 >   
 > 这是按方案落地的**第一版可运行骨架**：三条主线（专精化 / 遗忘曲线 / 跨科目）已跑通，
 >   
@@ -702,6 +702,42 @@ node tests\dom_test.cjs
 ---
 
 ## 十二、版本记录
+
+### v0.1.8 · 修「聊天框变形」+ 图片在气泡里裂图（2026-10-25）
+
+用户反馈：聊天框变形了。用真浏览器逐宽度量下来，是**四个布局根因叠加**，
+另外还牵出一个图标/图片的加载 bug。
+
+**根因 1（最致命）：整页被内容顶成上万像素高**
+`#app` 没有高度 → `.app { height: 100% }` 的百分比失去参照，退化成 auto
+→ `.app` 的隐式 grid 行被内容撑成 14,000+ px，整页滚动、输入框被推到最底下。
+修：`#app { height: 100% }` + 对话页 `.app { grid-template-rows: minmax(0,1fr) }`。
+
+**根因 2：窄屏时对话高度是硬算的**
+原 `calc(100vh - 132px)` 在标题换行（≤520px）时算不准，要么溢出要么塌；
+`@media (max-width:1180px)` 里还有一句 `height: auto`，直接把 `.msgs` 撑开。
+修：`.main` 变 flex 列，对话区 `flex: 1 1 auto; min-height: 0`，**不再用魔法数字**。
+
+**根因 3：输入框被挤成一条**
+`textarea` 全局是 `width: 100%`，只写 `flex: 1` 时最小宽度被撑住；
+窗口一窄就把输入框压到 95px。修：`flex: 1 1 0; min-width: 0`。
+
+**根因 4：`[hidden]` 被自己的样式顶掉**
+`.attach-bar { display: flex }` 覆盖了浏览器默认的 `[hidden] { display: none }`，
+没选图时也占位。修：补 `.attach-bar[hidden] { display: none }`。
+
+**顺带修的真 bug：气泡里的图片是裂图**
+`<img src="/api/chat/attachments/xxx">` **不会带 Authorization 头**，
+服务端只认 Bearer → 401 → 显示成"题目图片"的破图。
+修：改成带鉴权 `fetch` 取 blob 再转 objectURL（`hydrateImgs`），
+历史消息也走同一条路；外加未加载时的占位尺寸，避免气泡跳动。
+
+**窄屏适配**：≤900px 侧栏收成 64px 图标条（原来固定 216px，把对话区挤变形）。
+
+测试：后端 105/105、前端 37/37，**新增 `tests/layout_test.cjs`**——
+用无头 Edge 在 6 个宽度（1440/1280/1100/1024/820/520）真量尺寸，
+拦四类回归：页面被顶高、横向溢出、发送按钮掉出视口、输入框被裁。
+（jsdom 没有排版引擎，CSS 写崩了它照样全绿，所以这层必须真浏览器。）
 
 ### v0.1.7 · 对话支持上传题目图片（2026-10-25）
 

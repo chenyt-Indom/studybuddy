@@ -185,6 +185,8 @@ async function refreshMode() {
 function route() {
   const m = $('#main');
   m.innerHTML = '';
+  // 给 <body> 打上当前视图标记：对话页要用它做「撑满剩余高度」的布局（见 style.css）
+  document.body.dataset.view = state.view;
   ({ chat: viewChat, dashboard: viewDashboard, review: viewReview, mistakes: viewMistakes,
      insight: viewInsight, memory: viewMemory, textbook: viewTextbook,
      profile: viewProfile, settings: viewSettings }[state.view] || viewChat)(m);
@@ -220,7 +222,7 @@ async function viewChat(root) {
                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                   stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" />
                   <circle cx="8.6" cy="8.6" r="1.6" /><path d="M21 15.5l-4.6-4.6L5.6 21" /></svg></button>
-          <textarea id="inp" placeholder="例如：二次函数的顶点怎么求？我上次配方法错了…（Enter 发送，Shift+Enter 换行；题目不会做就拍图上传）"></textarea>
+          <textarea id="inp" placeholder="题目不会做？拍图上传，或直接问（Enter 发送 / Shift+Enter 换行）"></textarea>
           <button class="btn primary" id="send">发送</button>
         </div>
         <div class="hint" id="visionHint" hidden></div>
@@ -325,6 +327,7 @@ async function loadHistory() {
       return;
     }
     box.innerHTML = msgs.map(historyBubble).join('');
+    hydrateImgs(box);
     // 思维链原文用 textContent 注入，避免转义/HTML 注入
     const bots = $$('.msg.bot', box);
     const datas = msgs.filter(m => m.role !== 'user');
@@ -342,14 +345,47 @@ async function loadHistory() {
 function bubble(role, content, imgs) {
   const isUser = role === 'user';
   // 图片放文字上方：题目截图先看到，再看自己写的疑问
+  // imgs: [{id, src?}] —— src 只在刚发出去时有（本地预览 URL）；
+  // 历史消息只有 id，靠 hydrateImgs() 带鉴权拉取（<img> 标签不会带 Authorization 头）
   const pics = (imgs && imgs.length)
-    ? `<div class="bubble-imgs">${imgs.map(u =>
-        `<img class="zoom" src="${h(u)}" alt="题目图片" loading="lazy" />`).join('')}</div>`
+    ? `<div class="bubble-imgs">${imgs.map(im => {
+        const src = im.src ? ` src="${h(im.src)}"` : '';
+        const aid = im.id ? ` data-aid="${h(im.id)}"` : '';
+        return `<img class="zoom"${src}${aid} alt="题目图片" loading="lazy" />`;
+      }).join('')}</div>`
     : '';
   return `<div class="msg ${isUser ? 'user' : 'bot'}">
     <div class="av">${isUser ? '我' : 'SB'}</div>
     <div class="bubble">${pics}${isUser ? h(content).replace(/\n/g, '<br>') : md(content)}</div>
   </div>`;
+}
+
+/* 图片附件要用带鉴权的 fetch 取回来再变 blob URL。
+   直接用 <img src="/api/chat/attachments/..."> 是不行的：图片标签不会带 Authorization 头，
+   服务端只认 Bearer token → 结果就是"裂图"（踩过）。 */
+const imgCache = new Map();   // aid -> objectURL
+
+async function loadImgEl(img) {
+  const aid = img.dataset.aid;
+  if (!aid || img.getAttribute('src')) return;
+  if (imgCache.has(aid)) { img.src = imgCache.get(aid); return; }
+  try {
+    const res = await fetch('/api/chat/attachments/' + encodeURIComponent(aid), {
+      headers: { Authorization: 'Bearer ' + state.token }
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const url = URL.createObjectURL(await res.blob());
+    imgCache.set(aid, url);
+    img.src = url;
+  } catch (e) {
+    img.classList.add('broken');
+    img.alt = '图片加载失败（可能已被清理）';
+  }
+}
+
+function hydrateImgs(root) {
+  if (!root) return;
+  $$('img[data-aid]', root).forEach(img => { loadImgEl(img); });
 }
 
 /* ---------------- 聊天图片：选择 / 粘贴 / 拖拽 / 预览 ---------------- */
@@ -425,7 +461,7 @@ function openLightbox(src) {
 /* 历史消息：带思维链折叠 + 来源列表 */
 function historyBubble(m) {
   if (m.role === 'user') {
-    return bubble('user', m.content, (m.attachments || []).map(a => a.url));
+    return bubble('user', m.content, (m.attachments || []).map(a => ({ id: a.id })));
   }
   const src = (m.sources && m.sources.length)
     ? `<div class="sources"><div class="src-title">参考来源</div>${m.sources.map((s, i) =>
@@ -532,14 +568,15 @@ async function sendMessage() {
     return;
   }
   inp.value = ''; btn.disabled = true;
-  const sendUrls = imgs.map(i => i.url);
   const sendIds = imgs.map(i => i.id);
+  const sendItems = imgs.map(i => ({ id: i.id, src: i.preview || i.url }));
   pendingImgs = [];          // 图片已经跟着这条消息走了，预览立刻清空
   renderAttachBar();
 
   if (box.querySelector('.empty')) box.innerHTML = '';
   box.dataset.live = '1';   // 标记：这里已经有实时消息，别再被历史渲染覆盖
-  box.insertAdjacentHTML('beforeend', bubble('user', text, sendUrls));
+  box.insertAdjacentHTML('beforeend', bubble('user', text, sendItems));
+  hydrateImgs(box);
   const hd = createBotBubble(box);
   box.scrollTop = box.scrollHeight;
 
