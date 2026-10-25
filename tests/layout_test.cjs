@@ -113,7 +113,7 @@ function findBrowser() {
   await ev(`localStorage.setItem('sb_token', ${JSON.stringify(tok)});
     localStorage.setItem('sb_user', JSON.stringify({id:1,username:'layout',nickname:'布局'})); 1`);
 
-  for (const [w, h] of [[1440, 900], [1280, 800], [1100, 800], [1024, 768], [820, 760], [520, 820]]) {
+  for (const [w, h] of [[1440, 900], [1280, 800], [1200, 674], [1100, 800], [1024, 768], [820, 760], [520, 820]]) {
     await send('Emulation.setDeviceMetricsOverride',
       { width: w, height: h, deviceScaleFactor: 1, mobile: w < 600 });
     await send('Page.navigate', { url: BASE + '/' });
@@ -130,7 +130,14 @@ function findBrowser() {
       const msgs = document.querySelector('#msgs');
       const tb = ta ? ta.getBoundingClientRect() : null;
       const sb = sendBtn ? sendBtn.getBoundingClientRect() : null;
+      const row = document.querySelector('.composer-row');
+      const pick = document.querySelector('#pickImg');
+      const pb = pick ? pick.getBoundingClientRect() : null;
       return {
+        rowDisplay: row ? getComputedStyle(row).display : null,
+        // 图片按钮 / 发送按钮 与输入框是否在同一行（用户看到的"变形"就是它们竖着叠起来了）
+        sameRowPick: !!(pb && tb) && Math.abs((pb.top + pb.bottom) / 2 - (tb.top + tb.bottom) / 2) < 40,
+        sameRowSend: !!(sb && tb) && Math.abs((sb.top + sb.bottom) / 2 - (tb.top + tb.bottom) / 2) < 40,
         docH: de.scrollHeight, viewH: innerHeight, docW: de.scrollWidth, viewW: de.clientWidth,
         taW: tb ? Math.round(tb.width) : 0,
         taClipped: ta ? ta.scrollHeight > ta.clientHeight + 1 : null,
@@ -147,6 +154,9 @@ function findBrowser() {
     check(`${tag} 输入框有可用宽度`, m.taW >= 200, `width=${m.taW}px`);
     check(`${tag} 输入框文字没被裁`, m.taClipped === false);
     check(`${tag} 消息区没有横向滚动`, Math.abs(m.msgsOverX || 0) <= 1, `over=${m.msgsOverX}`);
+    check(`${tag} 输入区是横向一行`, m.rowDisplay === 'flex', `display=${m.rowDisplay}`);
+    check(`${tag} 图片按钮与输入框同行`, m.sameRowPick === true);
+    check(`${tag} 发送按钮与输入框同行`, m.sameRowSend === true);
   }
 
   try { child.kill(); } catch (e) { }

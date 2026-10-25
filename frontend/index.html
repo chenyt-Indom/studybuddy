@@ -4,12 +4,16 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>StudyBuddy · 智能学习助手</title>
-<link rel="stylesheet" href="/static/style.css" />
+<meta name="front-stamp" content="{{V}}" />
+<!-- ?v={{V}} 由后端返回本页时替换成前端文件的 mtime。
+     为什么要这个：静态文件没有 Cache-Control 时浏览器按启发式缓存，
+     改了 CSS 用户那边还在跑旧样式（"明明修好了怎么还变形"就是这个原因）。 -->
+<link rel="stylesheet" href="/static/style.css?v={{V}}" />
 </head>
 <body>
 <div id="app"></div>
 <div id="toast"></div>
-<script src="/static/charts.js"></script>
-<script src="/static/app.js"></script>
+<script src="/static/charts.js?v={{V}}"></script>
+<script src="/static/app.js?v={{V}}"></script>
 </body>
 </html>

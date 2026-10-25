@@ -4,7 +4,7 @@
 >   
 > 这个能力叫**专精化（Specialization）**——不是回答「问题」，而是回答「你问这个问题的这个人」。
 
-![状态](https://img.shields.io/badge/status-v0.1.8%20%E5%88%9D%E7%A8%BF-brightgreen)
+![状态](https://img.shields.io/badge/status-v0.1.9%20%E5%88%9D%E7%A8%BF-brightgreen)
 
 ![发布](https://img.shields.io/badge/release-v0.1.0--draft-orange)
 
@@ -18,7 +18,7 @@
 
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
-> **当前版本：v0.1.8 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
+> **当前版本：v0.1.9 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
 >   
 > 这是按方案落地的**第一版可运行骨架**：三条主线（专精化 / 遗忘曲线 / 跨科目）已跑通，
 >   
@@ -702,6 +702,24 @@ node tests\dom_test.cjs
 ---
 
 ## 十二、版本记录
+
+### v0.1.9 · 前端资源加版本号，杜绝"改了却还是老样子"（2026-10-25）
+
+用户第二次说"聊天框还是没解决"。复查：服务端 CSS 是对的、在 1200px 宽度下渲染正常，
+**是他浏览器还在跑旧 style.css**（截图里输入框、图片按钮、发送按钮竖着叠成三行，
+正是"新 HTML + 旧 CSS（没有 .composer-row 规则）"的表现）。
+
+根因：静态文件没设 `Cache-Control`，浏览器按启发式规则自己缓存；
+而 `index.html` 里引用的是 `/static/style.css`，URL 一直不变 → 缓存永远命中旧的。
+
+修（三层，任一层都能救命）：
+- `/` 返回 HTML 时把 `?v={{V}}` 替换成前端文件的 mtime → **改完前端链接自动变**，旧缓存自然失效
+- `/` 响应 `Cache-Control: no-store`；`/static/*` 响应 `Cache-Control: no-cache`（带 ETag，304 很便宜）
+- 侧栏版本号显示资源戳后四位（`v0.1 · 3425`）——以后"还是不对"先对一下这四位，
+  对不上就是缓存，刷新即可，不用再猜
+
+新增布局断言：输入区必须是横向一行（`.composer-row` 为 flex 且图片按钮/发送按钮与输入框同行），
+并补 1200×674 这一档（用户实际视口）。布局测试 63 项全绿。
 
 ### v0.1.8 · 修「聊天框变形」+ 图片在气泡里裂图（2026-10-25）
 

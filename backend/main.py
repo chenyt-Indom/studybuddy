@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import (
@@ -102,6 +102,31 @@ def health():
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
+    def _front_stamp() -> str:
+        """前端资源版本号 = 三个文件里最新的 mtime。
+
+        改完 CSS/JS 刷新一下，链接里的 ?v= 自动变，浏览器不可能再拿旧缓存。
+        （踩过：服务端早修好了布局，浏览器还在跑旧 style.css，用户看到"又变形了"）
+        """
+        stamps = []
+        for name in ("style.css", "app.js", "charts.js"):
+            p = FRONTEND_DIR / name
+            if p.exists():
+                stamps.append(p.stat().st_mtime)
+        return str(int(max(stamps))) if stamps else "0"
+
+    @app.middleware("http")
+    async def _no_stale_static(request, call_next):
+        """静态资源一律先问服务器（带 ETag 就 304，很便宜），别让浏览器自己猜。"""
+        resp = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
     @app.get("/")
     def index():
-        return FileResponse(FRONTEND_DIR / "index.html")
+        html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+        return HTMLResponse(
+            html.replace("{{V}}", _front_stamp()),
+            headers={"Cache-Control": "no-store"},
+        )

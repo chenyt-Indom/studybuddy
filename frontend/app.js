@@ -146,7 +146,7 @@ function renderApp() {
   document.getElementById('app').innerHTML = `
   <div class="app">
     <aside class="side">
-      <div class="logo">StudyBuddy <small>v0.1</small></div>
+      <div class="logo">StudyBuddy <small>v0.1${_frontStamp()}</small></div>
       <nav>${NAV.map(([k, n, ico]) =>
         `<a data-v="${k}" class="${state.view === k ? 'on' : ''}"><span class="ico">${ico}</span>${n}</a>`
       ).join('')}</nav>
@@ -2141,6 +2141,16 @@ async function viewSettings(root) {
 }
 
 /* ---------------- 启动 ---------------- */
+/* 前端资源戳（后端注入的 mtime）：显示在侧栏版本号后面。
+   出"还是老样子"时先看这四位——对不上就是浏览器还在跑旧缓存，刷新即可。 */
+function _frontStamp() {
+  try {
+    const meta = document.querySelector('meta[name="front-stamp"]');
+    const v = meta ? meta.content : '';
+    return /^\d+$/.test(v) ? ' · ' + v.slice(-4) : '';
+  } catch (e) { return ''; }
+}
+
 (async function boot() {
   if (!state.token) return renderAuth('login');
   try {
