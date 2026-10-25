@@ -1351,9 +1351,14 @@ async function viewMemory(root) {
 }
 
 /* ---------------- 视图：教材 ---------------- */
-const TB_STATE = { subject: 'math', stage: 'senior', openId: null, edition: '' };
+const TB_STATE = {
+  subject: 'math', stage: 'senior',
+  currentCode: '',      // 当前教材的 code（注意是 code 不是 id，两者比较不上就永远不高亮）
+  pendingEdition: ''    // 点了「导入这个版本」后，等导入完成要挂到的版本 code
+};
 
 async function viewTextbook(root) {
+  TB_STATE.pendingEdition = '';   // 每次进页面清掉上次点的那张卡，避免导入挂错版本
   root.innerHTML = `
   <div class="page-h">
     <div><h2>教材</h2>
@@ -1381,7 +1386,7 @@ async function viewTextbook(root) {
   </div>
 
   <div class="grid g2" style="margin-bottom:16px">
-    <div class="card">
+    <div class="card" id="tbImportCard">
       <h3>导入自己的教材 <span class="tag">PDF / TXT / MD</span></h3>
       <p class="hint" style="margin:0 0 12px">
         没有内置目录的版本，用自己手上的正版教材导入。<b>文件只存本机</b>
@@ -1431,16 +1436,29 @@ async function viewTextbook(root) {
   <div id="tbDialog"></div>`;
 
   // ---------- 版本列表 ----------
+  // tbSeq：切科目/学段时 +1，用来丢弃「上一个科目」迟到的响应，
+  // 否则慢请求回来会把新科目页面覆盖成旧数据（就是"切了没反应/切串了"）
+  let tbSeq = 0;
+
   const loadEditions = async () => {
+    const my = tbSeq;
     try {
       const r = await api.get(`/api/textbook/editions?subject=${TB_STATE.subject}&stage=${TB_STATE.stage}`);
-      if (!$('#tbEditions')) return;
+      if (my !== tbSeq || !$('#tbEditions')) return;
       const eds = r.editions || [];
       if (!eds.length) {
         $('#tbEditions').innerHTML = `<div class="empty">该学段该科目暂无版本记录，可直接用下面「导入」自建</div>`;
         return;
       }
-      $('#tbEditions').innerHTML = eds.map(e => `
+      $('#tbEditions').innerHTML = eds.map(e => {
+        const books = e.books || [];
+        // 没有内置/已导入目录的版本也必须给一个可点入口，
+        // 否则整张卡片连按钮都没有，用户点了只会觉得"切换没反应"
+        const bookBtns = books.map(b => `<button class="btn sm ${TB_STATE.currentCode === b.code ? 'primary' : ''}"
+            data-use="${h(b.code)}">${h(b.volume || b.title)}</button>`).join('');
+        const importBtn = e.custom ? '' : `<button class="btn sm" data-need="${h(e.code)}"
+            data-name="${h(e.name)}">${books.length ? '＋导入另一册' : '导入这个版本的目录'}</button>`;
+        return `
         <div class="mem" data-code="${h(e.code)}" style="border-left-color:${
           e.available ? '#16a34a' : '#e6eaf2'}">
           <div class="mem-head">
@@ -1452,23 +1470,44 @@ async function viewTextbook(root) {
             ${e.custom ? '<span class="pill">自定义</span>' : ''}
             <span class="mem-meta">${h(e.publisher || '')}</span>
             <div class="spacer"></div>
-            ${(e.books || []).map(b => `<button class="btn sm ${TB_STATE.openId === b.code ? 'primary' : ''}"
-                data-use="${h(b.code)}" data-id="?">${h(b.volume || b.title)}</button>`).join('')}
+            ${bookBtns}${importBtn}
           </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
 
-      // 绑定「设为当前 / 看结构」
-      const bookMap = {};
-      eds.forEach(e => (e.books || []).forEach(b => { bookMap[b.code] = b; }));
+      // 绑定「切到这一册」
       $$('#tbEditions [data-use]').forEach(btn => {
         btn.onclick = async () => {
           const code = btn.dataset.use;
+          const subject = TB_STATE.subject;   // 固定住科目，避免切换途中被改
+          $$('#tbEditions button').forEach(b => { b.disabled = true; });
+          btn.textContent = '切换中…';
           try {
-            await api.post(`/api/textbook/select?subject=${TB_STATE.subject}&code=${encodeURIComponent(code)}`);
-            toast('已切换教材');
+            const r = await api.post(
+              `/api/textbook/select?subject=${subject}&code=${encodeURIComponent(code)}`);
+            // api 对 {"ok": false} 不会抛错，之前就是这样"提示成功但什么都没变"
+            if (!r || r.ok === false) throw new Error((r && r.message) || '切换失败');
             TB_STATE.currentCode = code;
+            toast(`已切换到「${r.title || code}」`);
             await loadCurrent();
-          } catch (e) { toast(e.message, true); }
+            await loadEditions();   // 重渲染，让高亮跟着走
+          } catch (e) {
+            toast(e.message, true);
+            await loadEditions();   // 失败也要把按钮恢复可点
+          }
+        };
+      });
+
+      // 没有目录的版本：引导到下面导入区，并记住要挂到哪个版本
+      $$('#tbEditions [data-need]').forEach(btn => {
+        btn.onclick = () => {
+          const code = btn.dataset.need || '';
+          const nm = btn.dataset.name || '';
+          TB_STATE.pendingEdition = code;
+          if ($('#tbEdName')) $('#tbEdName').value = nm;
+          if ($('#tbImportCard')) $('#tbImportCard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if ($('#tbFile')) $('#tbFile').focus();
+          toast(`先导入《${nm}》的目录，导入完成后会自动切到这个版本`);
         };
       });
     } catch (e) { toast(e.message, true); }
@@ -1476,19 +1515,22 @@ async function viewTextbook(root) {
 
   // ---------- 当前 + 最新核查 ----------
   const loadCurrent = async () => {
+    const my = tbSeq;
     try {
       const c = await api.get('/api/textbook/current?subject=' + TB_STATE.subject);
-      if (!$('#tbCur')) return;
+      if (my !== tbSeq || !$('#tbCur')) return;
       if (!c.ok) {
+        TB_STATE.currentCode = '';
         $('#tbCur').textContent = '未选择';
         $('#tbLatest').innerHTML = `<div class="empty">该科目还没有可用教材，先在上面选一个或导入</div>`;
         $('#tbOutline').innerHTML = '<div class="empty">选一本教材查看结构</div>';
         return;
       }
       $('#tbCur').textContent = `${c.title}（${c.publisher}${c.volume ? ' · ' + c.volume : ''}）`;
-      TB_STATE.openId = c.id;
+      TB_STATE.currentCode = c.code;
 
       const l = await api.get(`/api/textbook/${c.id}/latest`);
+      if (my !== tbSeq || !$('#tbLatest')) return;
       const checked = l.checked_at
         ? l.checked_at.replace('T', ' ').slice(0, 16)
         : '从未核查';
@@ -1534,9 +1576,11 @@ async function viewTextbook(root) {
 
   // ---------- 结构 ----------
   const showOutline = async (id) => {
+    const my = tbSeq;
     $('#tbOutline').innerHTML = '<div class="empty">加载中…</div>';
     try {
       const r = await api.get(`/api/textbook/${id}/outline`);
+      if (my !== tbSeq || !$('#tbOutline')) return;
       if (!r.ok) { $('#tbOutline').innerHTML = `<div class="empty">${h(r.message)}</div>`; return; }
       const total = (r.chapters || []).reduce((a, c) => a + c.sections.length, 0);
       $('#tbOutline').innerHTML = `
@@ -1571,6 +1615,7 @@ async function viewTextbook(root) {
     fd.append('grade', $('#tbGrade').value);
     fd.append('volume', $('#tbVolume').value.trim());
     fd.append('edition_name', $('#tbEdName').value.trim());
+    fd.append('edition_code', TB_STATE.pendingEdition || '');   // 从版本卡点进来的，挂到那个版本下
     const y = $('#tbEdYear').value.trim();
     if (y) fd.append('edition_year', y);
     $('#tbUpOut').innerHTML = '<div class="empty">解析中…（大 PDF 可能要十几秒）</div>';
@@ -1585,7 +1630,13 @@ async function viewTextbook(root) {
       $('#tbUpOut').innerHTML = `<div class="insight ${r.ok ? '' : 'high'}" style="margin-top:12px">
         <div class="t">${r.ok ? '✅ 解析完成' : '❌ 解析失败'}</div>
         <div class="d">${h(r.message || '')}</div></div>`;
-      if (r.ok) { toast(r.message); await loadEditions(); await loadCurrent(); }
+      if (r.ok) {
+        toast(r.message);
+        TB_STATE.pendingEdition = '';
+        TB_STATE.currentCode = '';
+        await loadCurrent();     // 先刷新「当前」，再用新的 currentCode 重渲染版本卡（高亮才准）
+        await loadEditions();
+      }
     } catch (e) {
       $('#tbUpOut').innerHTML = `<div class="empty">${h(e.message)}</div>`;
     }
@@ -1598,13 +1649,16 @@ async function viewTextbook(root) {
     try {
       const r = await api.post('/api/textbook/outline', {
         subject: TB_STATE.subject, raw, title: $('#tbTitle').value.trim() || '自定义教材目录',
-        stage: TB_STATE.stage,
+        stage: TB_STATE.stage, edition_code: TB_STATE.pendingEdition || '',
       });
       if (r.ok === false) return toast(r.message, true);
       $('#tbPasteOut').innerHTML = `<div class="insight" style="margin-top:12px"><div class="d">${h(r.message)}</div></div>`;
       toast(r.message);
       $('#tbRaw').value = '';
-      await loadEditions(); await loadCurrent();
+      TB_STATE.pendingEdition = '';
+      TB_STATE.currentCode = '';
+      await loadCurrent();
+      await loadEditions();
     } catch (e) { toast(e.message, true); }
   };
 
@@ -1634,13 +1688,27 @@ async function viewTextbook(root) {
     };
   };
 
-  $('#tbStage').value = TB_STATE.stage;
-  $('#tbStage').onchange = () => { TB_STATE.stage = $('#tbStage').value; loadEditions(); };
-  $('#tbSubject').value = TB_STATE.subject;
-  $('#tbSubject').onchange = () => { TB_STATE.subject = $('#tbSubject').value; loadEditions(); loadCurrent(); };
+  // 换科目/学段：作废在飞的旧请求，清掉上一科的残留，再按顺序重新拉
+  const reloadFor = async () => {
+    tbSeq++;
+    TB_STATE.currentCode = '';
+    TB_STATE.pendingEdition = '';
+    if ($('#tbCur')) $('#tbCur').textContent = '';
+    if ($('#tbLatest')) $('#tbLatest').innerHTML = '<div class="empty">加载中…</div>';
+    if ($('#tbOutline')) $('#tbOutline').innerHTML = '<div class="empty">加载中…</div>';
+    if ($('#tbDialog')) $('#tbDialog').innerHTML = '';
+    await loadCurrent();   // 先确定"当前是哪本"，版本卡的高亮才对得上
+    await loadEditions();
+  };
 
-  await loadEditions();
+  $('#tbStage').value = TB_STATE.stage;
+  $('#tbStage').onchange = () => { TB_STATE.stage = $('#tbStage').value; reloadFor(); };
+  $('#tbSubject').value = TB_STATE.subject;
+  $('#tbSubject').onchange = () => { TB_STATE.subject = $('#tbSubject').value; reloadFor(); };
+
+  // 先拿到「当前是哪本」，再渲染版本卡，否则高亮永远对不上
   await loadCurrent();
+  await loadEditions();
 }
 
 /* ---------------- 视图：设置 ---------------- */

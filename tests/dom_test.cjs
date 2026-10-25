@@ -183,6 +183,42 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   await waitFor(() => doc.querySelector('#tbCheck'), 12000);
   check('有「检查是否最新」按钮', !!doc.querySelector('#tbCheck'));
 
+  // 教材切换（曾整块失效：没目录的版本连按钮都没有、当前册永不高亮）
+  const tbCards = Array.from(doc.querySelectorAll('#tbEditions > .mem'));
+  const deadCards = tbCards.filter(c => !c.querySelector('button'))
+    .map(c => c.querySelector('b').textContent.trim());
+  check('每个教材版本都有可点入口', deadCards.length === 0, deadCards.join(',') || `${tbCards.length} 张卡`);
+
+  await waitFor(() => doc.querySelector('#tbEditions button.primary'), 12000);
+  const hlBefore = Array.from(doc.querySelectorAll('#tbEditions button.primary'))
+    .map(b => b.textContent.trim());
+  check('当前册有高亮', hlBefore.length === 1, hlBefore.join(','));
+
+  const outlineBefore = (doc.querySelector('#tbOutline') || {}).textContent || '';
+  // 每次跑都切到「当前之外」的那一册，保证可重复（否则第二次跑就是原地不动）
+  const targetName = hlBefore[0] === '必修第二册' ? '必修第一册' : '必修第二册';
+  const bx2 = Array.from(doc.querySelectorAll('#tbEditions button[data-use]'))
+    .find(b => b.textContent.trim() === targetName);
+  if (bx2) {
+    bx2.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    const switched = await waitFor(() =>
+      (doc.querySelector('#tbCur') || {}).textContent.includes(targetName), 12000);
+    check(`切到${targetName}生效`, switched,
+          ((doc.querySelector('#tbCur') || {}).textContent || '').trim());
+    const hlAfter = Array.from(doc.querySelectorAll('#tbEditions button.primary'))
+      .map(b => b.textContent.trim());
+    check('切换后高亮跟着走', hlAfter.length === 1 && hlAfter[0] === targetName,
+          hlAfter.join(',') || '无');
+    await waitFor(() => {
+      const t = (doc.querySelector('#tbOutline') || {}).textContent || '';
+      return t && t !== outlineBefore;
+    }, 12000);
+    check('切换后章节结构同步',
+          ((doc.querySelector('#tbOutline') || {}).textContent || '') !== outlineBefore);
+  } else {
+    check(`找到${targetName}按钮`, false);
+  }
+
   // 回到对话页再检查联网开关
   const backChat = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'chat');
   backChat.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

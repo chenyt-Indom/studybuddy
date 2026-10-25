@@ -159,6 +159,7 @@ def import_file(
     publisher: str = "用户导入",
     edition_name: str = "",
     edition_year: int | None = None,
+    edition_code: str = "custom",
 ) -> dict:
     if not data:
         return {"ok": False, "message": "文件为空"}
@@ -177,7 +178,7 @@ def import_file(
         user_id=user_id, code=code, title=title, subject_key=subject_key,
         stage=stage, grade=grade, volume=volume or "用户导入",
         publisher=publisher, bundled=False, file_path=str(stored),
-        edition_code="custom", edition_name=edition_name or publisher,
+        edition_code=(edition_code or "custom")[:16], edition_name=edition_name or publisher,
         edition_year=edition_year,
         page_count=pages, char_count=len(text),
         parse_status="parsed" if text else "failed",
@@ -223,7 +224,7 @@ def import_outline_text(
     db: Session, user_id: int, raw: str, subject_key: str,
     stage: str = "senior", grade: str = "senior_1",
     volume: str = "手抄目录", publisher: str = "用户录入",
-    title: str = "自定义教材目录",
+    title: str = "自定义教材目录", edition_code: str = "custom",
 ) -> dict:
     """粘贴目录文本导入。每行一条：`第一章 集合 | 1.1 集合的概念 | 集合,元素`"""
     lines = [l.strip() for l in (raw or "").splitlines() if l.strip()]
@@ -235,6 +236,7 @@ def import_outline_text(
         user_id=user_id, code=code, title=title[:100], subject_key=subject_key,
         stage=stage, grade=grade, volume=volume, publisher=publisher,
         bundled=False, parse_status="outline",
+        edition_code=(edition_code or "custom")[:16],
         parse_note="用户粘贴的目录（仅结构）",
     )
     db.add(tb)

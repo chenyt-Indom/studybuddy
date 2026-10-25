@@ -40,6 +40,7 @@ class OutlineIn(BaseModel):
     title: str = "自定义教材目录"
     stage: str = "senior"
     grade: str = "senior_1"
+    edition_code: str = ""       # 从版本卡点进来时带上，导入后就挂到那个版本下
 
 
 @router.get("/list")
@@ -73,6 +74,7 @@ async def upload(
     volume: str = Form(""),
     edition_name: str = Form(""),
     edition_year: int | None = Form(None),
+    edition_code: str = Form(""),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -82,6 +84,7 @@ async def upload(
         db, user.id, file.filename or "textbook.pdf", data,
         subject_key=subject, stage=stage, grade=grade, volume=volume,
         edition_name=edition_name, edition_year=edition_year,
+        edition_code=edition_code or "custom",
     )
     if res.get("ok"):
         set_user_textbook(db, user.id, subject, res["code"])
@@ -96,6 +99,7 @@ def create_outline(body: OutlineIn, user: User = Depends(current_user),
     res = import_outline_text(
         db, user.id, body.raw, body.subject,
         stage=body.stage, grade=body.grade, title=body.title,
+        edition_code=body.edition_code or "custom",
     )
     if res.get("ok"):
         set_user_textbook(db, user.id, body.subject, res["code"])

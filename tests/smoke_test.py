@@ -441,6 +441,43 @@ if tid:
     check("导入的目录有结构", len(oo.get("chapters") or []) == 1)
     check("可删除导入教材", c.delete(f"/api/textbook/{tid}").json().get("ok") is True)
 
+# 切换教材（原来只有"能选到"，没有"真能切"，漏掉了这条路径）
+eds = c.get("/api/textbook/editions", params={"subject": "math", "stage": "senior"}).json()["editions"]
+rja = [e for e in eds if e["code"] == "rja"][0]
+codes = [b["code"] for b in rja["books"]]
+check("人教A版有多个册次可切", len(codes) >= 2, "/".join(codes))
+
+for code in codes[:2]:
+    c.post("/api/textbook/select", params={"subject": "math", "code": code})
+    cur2 = c.get("/api/textbook/current", params={"subject": "math"}).json()
+    check(f"切到 {code} 后 current 一致", cur2.get("code") == code, cur2.get("title"))
+
+# 切到"没有内置目录"的版本应当明确失败，而不是假成功
+bad = c.post("/api/textbook/select", params={"subject": "math", "code": "bsd"}).json()
+check("没有目录的版本不能假成功", bad.get("ok") is False, bad.get("message"))
+
+# 导入目录时带上版本 code -> 该版本立刻变成"已导入"且册次可点，不产生重复的自定义卡
+bsd_before = [e for e in eds if e["code"] == "bsd"][0]
+check("北师大版原本没有可用册次", bsd_before["books"] == [])
+r = c.post("/api/textbook/outline", json={
+    "subject": "math", "title": "北师大版必修一", "edition_code": "bsd",
+    "raw": "第一章 预备知识 | 1.1 集合 | 集合\n第一章 预备知识 | 1.2 常用逻辑用语 | 充分条件",
+}).json()
+new_code = r.get("code")
+eds2 = c.get("/api/textbook/editions", params={"subject": "math", "stage": "senior"}).json()["editions"]
+bsd_after = [e for e in eds2 if e["code"] == "bsd"][0]
+check("导入后北师大版有可用册次", bsd_after["available"] and len(bsd_after["books"]) == 1,
+      str([b["code"] for b in bsd_after["books"]]))
+check("导入后不另起一张自定义卡",
+      not [e for e in eds2 if e.get("custom")], str([e["name"] for e in eds2]))
+cur3 = c.get("/api/textbook/current", params={"subject": "math"}).json()
+check("导入后自动切到新教材", cur3.get("code") == new_code, cur3.get("title"))
+ok3 = c.post("/api/textbook/select", params={"subject": "math", "code": new_code}).json()
+check("刚导入的册次可再次切回", ok3.get("ok") is True, ok3.get("title"))
+
+# 切回内置第一册，避免影响后续用例
+c.post("/api/textbook/select", params={"subject": "math", "code": codes[0]})
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:
