@@ -606,6 +606,34 @@ check("prompt 有跨科联动", "【跨科联动·记忆锚点】" in sp)
 check("prompt 有教材定位", "【教材定位】" in sp)
 check("教材名没重复出版社", "人教版 人教版" not in sp)
 
+print("25. 教材知识库（IMA）对接：状态 / 诊断 / 降级")
+st = c.get("/api/ext/ima").json()
+check("IMA 状态可读", st.get("ok") is True, f"configured={st.get('configured')}")
+check("指向 IMA 的 MCP 接口", "ima.qq.com" in (st.get("url") or ""), st.get("url"))
+check("状态里有本地片段计数", isinstance(st.get("cached_snippets"), int),
+      f"{st.get('cached_snippets')} 条")
+pr = c.post("/api/ext/ima/test").json()
+check("诊断接口有结构", isinstance(pr.get("probe"), dict) and "ok" in (pr.get("probe") or {}),
+      (pr.get("probe") or {}).get("reason", ""))
+# 没 token 时必须明确说「未配置」，而不是 500
+if not st.get("configured"):
+    check("没配 token 时诊断给出明确原因",
+          "Token" in ((pr.get("probe") or {}).get("reason") or ""),
+          (pr.get("probe") or {}).get("reason", ""))
+    sy = c.post("/api/ext/ima/sync", json={"stage": "senior", "max_queries": 1}).json()
+    check("没配 token 时同步给出明确原因", sy.get("ok") is False
+          and "Token" in (sy.get("message") or ""), sy.get("message"))
+kb = c.get("/api/ext/kb", params={"q": "平抛运动"}).json()
+check("本地片段检索可用（可以为空）", kb.get("ok") is True and isinstance(kb.get("items"), list),
+      f"{kb.get('count')} 条")
+# 开关能读能写（测完恢复成开）
+off = c.post("/api/ext/ima/enabled", json={"enabled": False}).json()
+on = c.post("/api/ext/ima/enabled", json={"enabled": True}).json()
+check("教材摘录开关可切换", off.get("enabled") is False and on.get("enabled") is True)
+check("关闭后讲解 prompt 里没有教材摘录段",
+      "【教材摘录】" not in c.get("/api/profile/prompt-preview",
+                                  params={"subject": "physics"}).json()["system_prompt"])
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

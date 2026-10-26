@@ -252,6 +252,21 @@ async def stream_reply(
             }
         yield {"type": "search", **search_info}
 
+    # ---------- 外部教材知识库（IMA）：有就用，没有就算了，绝不阻塞 ----------
+    try:
+        from . import ext_kb
+        ext_ctx = await ext_kb.context(
+            user_id, subject_key, display_text,
+            stage=ctx.get("stage") or "senior", grade=ctx.get("grade") or "senior_1",
+        )
+        if ext_ctx and ext_ctx.get("items"):
+            ctx["ext_textbook"] = ext_ctx
+            yield {"type": "status",
+                   "text": f"已取用教材摘录 {len(ext_ctx['items'])} 条"
+                           f"（{'IMA 实时' if ext_ctx.get('origin') == 'live' else '本地缓存'}）"}
+    except Exception:
+        pass
+
     system_prompt = build_tutor_prompt(ctx, subject_key)
     messages = [{"role": "system", "content": system_prompt}] + chat_msgs
 

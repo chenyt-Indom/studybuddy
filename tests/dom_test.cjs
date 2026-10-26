@@ -291,6 +291,21 @@ async function waitFor(fn, timeout = 8000, step = 120) {
     check(`找到${targetName}按钮`, false);
   }
 
+  // 设置页：教材知识库（IMA）卡片
+  Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'settings')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await waitFor(() => doc.querySelector('#imaCard'), 12000);
+  check('设置页有教材知识库（IMA）卡片', !!doc.querySelector('#imaCard'));
+  check('IMA 卡片有令牌输入与保存',
+        !!doc.querySelector('#imaToken') && !!doc.querySelector('#imaSave'));
+  check('IMA 卡片有测试连接/同步/开关',
+        !!doc.querySelector('#imaTest') && !!doc.querySelector('#imaSync') &&
+        !!doc.querySelector('#imaOn'));
+  const imaSt = await waitFor(() => doc.querySelector('#imaStatus') &&
+    doc.querySelector('#imaStatus').textContent.length > 4, 12000);
+  check('IMA 状态已加载', imaSt,
+        ((doc.querySelector('#imaStatus') || {}).textContent || '').slice(0, 40));
+
   // 回到对话页再检查联网开关
   const backChat = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'chat');
   backChat.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

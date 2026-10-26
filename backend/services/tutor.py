@@ -109,6 +109,19 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
             + "\n".join(blocks)
         )
 
+    # ①f 外部教材摘录（IMA）：用来校准术语/顺序，不是拿来照抄的
+    ext = ctx.get("ext_textbook") or {}
+    if ext.get("items"):
+        from .ext_kb import render_context
+        body = render_context(ext)
+        if body:
+            parts.append(
+                "【教材摘录】以下是从教材知识库检索到的原文片段（不是我的记忆）。\n"
+                "用法：**只用来校准术语、符号、章节顺序和课本口径**；"
+                "讲解时用自己的话，**不要整段照抄**，也不要说「课本原话是…」除非摘录里确实有。\n"
+                "如果摘录与你的记忆冲突，以摘录为准，并说明依据。\n\n" + body
+            )
+
     # ② 认知风格 → 讲解方式
     style = ctx.get("primary_style")
     if style and STYLE_HINT.get(style):

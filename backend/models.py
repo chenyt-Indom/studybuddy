@@ -106,6 +106,30 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class KbSnippet(Base):
+    """外部教材知识库（IMA）检索到的片段缓存。
+
+    只存**片段 + 出处**：不存整本正文，不外传。
+    作用：没网/没 token 时，之前同步过的片段还能继续给讲解当参考。
+    """
+
+    __tablename__ = "kb_snippets"
+    __table_args__ = (UniqueConstraint("user_id", "hash", name="uq_kb_snippet"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    hash: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    snippet: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(String(500), default="")
+    source: Mapped[str] = mapped_column(String(80), default="IMA")
+    stage: Mapped[str] = mapped_column(String(16), default="")
+    grade: Mapped[str] = mapped_column(String(16), default="")
+    subject_key: Mapped[str] = mapped_column(String(32), default="")
+    query: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class Grade(Base):
     __tablename__ = "grades"
 

@@ -241,6 +241,32 @@ class Settings:
         """Key 是否加密存储（非 Windows 会降级为明文，前端要如实提示）。"""
         return self.secrets.protected
 
+    # ---- 外部教材知识库（IMA）----
+    @property
+    def ima_token(self) -> str:
+        env = os.getenv("IMA_ACCESS_TOKEN", "")
+        if env:
+            return env.strip()
+        return self.secrets.get("ima")
+
+    def set_ima_token(self, token: str) -> None:
+        if (token or "").strip():
+            self.secrets.set("ima", token.strip())
+        else:
+            self.secrets.clear("ima")
+
+    @property
+    def ima_enabled(self) -> bool:
+        """对话时是否去查外部教材库。默认开；没 token 时会自动落到本地缓存。"""
+        v = self._cache.get("ima_enabled")
+        return True if v is None else bool(v)
+
+    def set_ima_enabled(self, on: bool) -> None:
+        self._cache["ima_enabled"] = bool(on)
+        SETTINGS_FILE.write_text(
+            json.dumps(self._cache, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     # ---- 联网搜索 ----
     @property
     def search_enabled(self) -> bool:

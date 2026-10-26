@@ -2207,6 +2207,37 @@ async function viewSettings(root) {
         本项目已按场景区分 —— 讲课类开思考（质量优先），抽记忆 / 挖模式 / 出题关思考（要确定性）。
       </p>
     </div>
+  </div>
+
+  <div class="card" id="imaCard" style="margin-top:16px">
+    <h3>④ 教材知识库（IMA）<span class="tag">小学到大学的教材 · 只用来检索，不整本下载</span></h3>
+    <p class="hint" style="margin:0 0 12px">
+      IMA 里挂着从小学到大学的教材知识库。这里通过它的 MCP 接口做<b>检索</b>：
+      讲解时把命中的片段当「课本口径」参考，<b>本地只缓存片段和出处</b>，不保存整本正文。
+    </p>
+    <div id="imaStatus" class="hint">读取中…</div>
+    <div style="height:12px"></div>
+    <div class="field"><label>IMA 访问令牌 / Cookie</label>
+      <div class="row">
+        <input id="imaToken" type="password" autocomplete="off" spellcheck="false"
+               placeholder="粘贴后点保存，输入框会立即清空" style="flex:1" />
+        <button class="btn" id="imaSave" type="button">保存</button>
+      </div>
+    </div>
+    <p class="hint" style="margin:8px 0 0">
+      <b>怎么拿</b>：浏览器打开 <span class="mono">ima.qq.com</span> 并登录 →
+      <span class="mono">F12</span> → Network → 点任意 <span class="mono">cgi-bin/</span> 请求 →
+      复制 Request Headers 里的 <span class="mono">X-Ima-Cookie</span> 整串粘进来即可
+      （也支持只粘 <span class="mono">IMA-TOKEN</span> 的值）。令牌同样走 DPAPI 加密，只存本机。
+    </p>
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:14px">
+      <button class="btn primary" id="imaTest">测试连接（看有哪些工具）</button>
+      <button class="btn" id="imaSync">一键同步本年级教材片段</button>
+      <button class="btn ghost" id="imaClear" style="color:#b91c1c">清空本地片段</button>
+      <label class="switch" style="margin-left:auto"><input type="checkbox" id="imaOn"><i></i></label>
+      <span class="hint">对话时自动带教材摘录</span>
+    </div>
+    <div id="imaOut" style="margin-top:12px"></div>
   </div>`;
 
   // ---------- 渲染 ----------
@@ -2292,6 +2323,112 @@ async function viewSettings(root) {
     toast(e.message, true);
     return;
   }
+
+  // ---------- 教材知识库（IMA） ----------
+  const renderIma = (st) => {
+    if (!$('#imaStatus')) return;
+    const bits = [
+      st.configured
+        ? `<span class="pill ok">已配置</span> <span class="mono">${h(st.token_masked || '')}</span>`
+        : '<span class="pill warn">未配置令牌</span>',
+      `<span class="pill">接口 ${h(st.url || '')}</span>`,
+      `<span class="pill">本地片段 ${st.cached_snippets || 0} 条</span>`,
+    ];
+    $('#imaStatus').innerHTML = bits.join(' ') +
+      `<div class="hint" style="margin-top:6px">${h(st.note || '')}</div>`;
+    if ($('#imaOn')) $('#imaOn').checked = !!st.enabled;
+    if ($('#imaToken')) {
+      $('#imaToken').value = '';
+      $('#imaToken').placeholder = st.configured
+        ? `已保存 ${st.token_masked || ''}，留空则不修改`
+        : '粘贴 IMA access token';
+    }
+  };
+
+  const loadIma = async () => {
+    try {
+      const st = await api.get('/api/ext/ima');
+      if (!$('#imaStatus')) return;
+      renderIma(st);
+    } catch (e) {
+      if ($('#imaStatus')) $('#imaStatus').textContent = '读取失败：' + e.message;
+    }
+  };
+
+  $('#imaSave').onclick = async () => {
+    const t = $('#imaToken').value.trim();
+    $('#imaToken').value = '';
+    $('#imaToken').type = 'password';
+    if (!t) return toast('先粘贴令牌', true);
+    try {
+      const st = await api.post('/api/ext/ima/token', { token: t });
+      renderIma(st);
+      toast('已加密保存 IMA 令牌，建议点「测试连接」确认');
+    } catch (e) { toast(e.message, true); }
+  };
+
+  $('#imaTest').onclick = async () => {
+    const out = $('#imaOut');
+    out.innerHTML = '<div class="empty">正在连接 IMA…</div>';
+    try {
+      const r = await api.post('/api/ext/ima/test');
+      renderIma(r);
+      const p = r.probe || {};
+      const tools = (p.tools || []).map(t =>
+        `<div class="kp-link"><b class="mono">${h(t.name)}</b>
+           ${t.name === p.picked ? '<span class="pill ok">用作检索</span>' : ''}
+           <div class="hint">${h(t.description || '')}
+           ${t.args && t.args.length ? ` · 参数：${h(t.args.join(', '))}` : ''}</div></div>`).join('');
+      out.innerHTML = `<div class="insight ${r.ok ? '' : 'high'}">
+        <div class="t">${r.ok ? '✅ 连上了' : '❌ 连接不上'}</div>
+        <div class="d">${h(p.server ? `服务端 ${p.server}` : '')}
+          ${p.reason ? ` · ${h(p.reason)}` : ''}
+          ${p.picked ? ` · 自动选中的检索工具：${h(p.picked)}` : ''}</div>
+        ${tools ? `<div style="margin-top:8px">${tools}</div>` : ''}
+      </div>`;
+    } catch (e) {
+      out.innerHTML = `<div class="empty">${h(e.message)}</div>`;
+    }
+  };
+
+  $('#imaSync').onclick = async () => {
+    const out = $('#imaOut');
+    out.innerHTML = '<div class="empty">正在按知识点批量检索…（十几个查询，可能要几十秒）</div>';
+    $('#imaSync').disabled = true;
+    try {
+      const r = await api.post('/api/ext/ima/sync', { stage: 'senior' });
+      if (r.ok === false && r.message) {
+        out.innerHTML = `<div class="insight high"><div class="d">${h(r.message)}</div></div>`;
+      } else {
+        out.innerHTML = `<div class="insight"><div class="t">同步结果</div>
+          <div class="d">${h(r.message || '')}</div></div>`;
+      }
+      renderIma(r);
+    } catch (e) {
+      out.innerHTML = `<div class="empty">${h(e.message)}</div>`;
+    } finally {
+      $('#imaSync').disabled = false;
+    }
+  };
+
+  $('#imaClear').onclick = async () => {
+    if (!confirm('清空本地已缓存的教材片段？之后只能靠 IMA 实时检索。')) return;
+    try {
+      const st = await api.del('/api/ext/kb');
+      renderIma(st);
+      toast('已清空本地片段');
+    } catch (e) { toast(e.message, true); }
+  };
+
+  $('#imaOn').onchange = async () => {
+    try {
+      const st = await api.post('/api/ext/ima/enabled', { enabled: $('#imaOn').checked });
+      renderIma(st);
+      toast(st.enabled ? '对话时会带教材摘录' : '已关闭教材摘录');
+    } catch (e) { toast(e.message, true); }
+  };
+
+  loadIma();
 
   // ---------- 交互 ----------
   $('#toggleKey').onclick = () => {
