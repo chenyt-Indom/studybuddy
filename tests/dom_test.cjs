@@ -117,12 +117,13 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   check('进入主界面（boot 成功）', booted);
 
   const navs = Array.from(doc.querySelectorAll('.side nav a')).map(a => a.textContent.trim());
-  check('侧边栏导航', navs.length === 9, navs.join(' / '));
+  check('侧边栏导航', navs.length === 10 && navs.some(n => n.includes('知识点')), navs.join(' / '));
 
   // 逐个视图渲染
   for (const [key, mustHave] of [
     ['dashboard', '学情看板'], ['review', '复习中心'], ['mistakes', '错题本'],
-    ['insight', '洞察'], ['memory', '自动整理'], ['textbook', '教材'], ['profile', '学习档案'],
+    ['insight', '洞察'], ['kp', '知识点汇总'], ['memory', '自动整理'],
+    ['textbook', '教材'], ['profile', '学习档案'],
     ['settings', '选择供应商']
   ]) {
     const link = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === key);
@@ -205,6 +206,29 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   dashLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const hasSvg = await waitFor(() => doc.querySelectorAll('#main svg').length >= 1, 9000);
   check('图表渲染为 SVG', hasSvg, `${doc.querySelectorAll('#main svg').length} 个`);
+
+  // 知识点汇总页：分组列表 + 点开详情（要点/易错/记忆锚点）
+  const kpLink = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'kp');
+  kpLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const kpOk = await waitFor(() => doc.querySelectorAll('#kpList .kp-row').length > 5, 12000);
+  check('知识点列表已渲染', kpOk, `${doc.querySelectorAll('#kpList .kp-row').length} 行`);
+  check('知识点行带年级徽章',
+        !!doc.querySelector('#kpList .kp-nm .pill'));
+  check('有统计卡', doc.querySelectorAll('#kpStats .card').length === 4);
+  if (kpOk) {
+    const row = doc.querySelector('#kpList .kp-row');
+    const code = row.dataset.code;
+    row.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    const detailOk = await waitFor(() => doc.querySelector('#kpDetailCard'), 12000);
+    check('点开知识点有详情卡', detailOk, code);
+    if (detailOk) {
+      const txt = doc.querySelector('#kpDetailCard').textContent;
+      check('详情含一句话要点', txt.includes('一句话要点'));
+      check('详情含常见易错', txt.includes('常见易错'));
+      check('详情含记忆锚点', txt.includes('记忆锚点'));
+      check('详情含跨科联动区', txt.includes('跨科联动'));
+    }
+  }
 
   // 记忆库页：开关 + 管理按钮 + 档案区
   const memLink = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'memory');

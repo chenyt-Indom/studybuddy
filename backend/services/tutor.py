@@ -41,7 +41,18 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
         )
     )
 
-    # ① 时间感知：放最前面，模型对开头最敏感
+    # ① 年级约束：先框死范围，避免拿高年级工具解低年级的题
+    grade_cn = ctx.get("grade_cn") or GRADE_CN.get(ctx.get("grade") or "", "")
+    if grade_cn:
+        parts.append(
+            f"【年级约束】该生读{grade_cn}。讲解**优先用{grade_cn}及以前学过的概念、符号和方法**，"
+            "不要默认他掌握更高年级的工具。\n"
+            "如果这道题绕不开更高年级的内容（例如初中题用相似与勾股、高一题碰导数），"
+            "先用一句话说明「这属于X年级的内容」，再给一个当前年级能听懂的说法或结论，"
+            "并提示他什么时候会正式学。"
+        )
+
+    # ①b 时间感知
     parts.append(ctx.get("time_line") or _default_time_line())
 
     # ①b 学习档案（综述层）：整体背景，比单条记忆更像"了解这个人"
@@ -78,6 +89,26 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
             "如果是学生自己的解答，先判断他做到哪一步、哪一步开始出错，再针对那一步讲。"
         )
 
+    # ①e 知识点提示：把「最该记住的」和「最容易错的」直接递到嘴边
+    hints = ctx.get("kp_hints") or []
+    if hints:
+        blocks = []
+        for h in hints[:3]:
+            lines = [f"- {h.get('name') or ''}"]
+            if h.get("summary"):
+                lines.append(f"  要点：{h['summary']}")
+            if h.get("pitfall"):
+                lines.append(f"  易错：{h['pitfall']}")
+            if h.get("mnemonic"):
+                lines.append(f"  记忆锚点：{h['mnemonic']}")
+            blocks.append("\n".join(lines))
+        parts.append(
+            "【知识点提示】以下是课本口径的要点、常见易错和记忆锚点。\n"
+            "用法：把「易错」那一条**明确指出**（如果学生正踩在上面），"
+            "把「记忆锚点」自然地讲成一句口诀，**不要原文照念成列表**。\n\n"
+            + "\n".join(blocks)
+        )
+
     # ② 认知风格 → 讲解方式
     style = ctx.get("primary_style")
     if style and STYLE_HINT.get(style):
@@ -107,12 +138,19 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
     for p in (ctx.get("patterns") or [])[:3]:
         parts.append(f"【模式洞察】{p.get('title','')}\n{p.get('detail','')}\n建议：{p.get('action','')}")
 
-    # ⑥ 跨科目关联
+    # ⑥ 跨学科联动 —— 目的是**好记、记得久**，不是炫知识面
     cs = ctx.get("cross_subject")
     if cs:
+        m = cs.get("related_mastery")
+        strength = "他已经比较熟" if (m or 0) >= 0.6 else (
+            "他那里也不太稳，正好一起补" if m is not None else "还没测过"
+        )
         parts.append(
-            f"【跨科关联】本知识点与{cs['related_subject_cn']}的「{cs['related_kp']}」"
-            f"相关（该生该处掌握度 {cs['related_mastery']:.0%}），可适时提及联动。"
+            f"【跨科联动·记忆锚点】本知识点可以用{cs['related_subject_cn']}的"
+            f"「{cs['related_kp']}」来锚定（{cs['relation_cn']}，{strength}）。\n"
+            f"怎么借力：{cs.get('note') or ''}\n"
+            "用法：**最多点一次**，用「这个你其实在X科学过」这种一句话建立连接，"
+            "然后回到本题。不要展开成两科对比，更不要为了联动而联动。"
         )
 
     # ⑦ 历史记忆（分两层展示：关于这个人 / 关于这个学科）

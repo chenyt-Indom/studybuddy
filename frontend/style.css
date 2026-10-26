@@ -412,3 +412,36 @@ body[data-view="chat"] .chat-layout { flex: 1 1 auto; min-height: 0; height: aut
 /* 图片还没拉回来时的占位（避免气泡先塌再跳），以及加载失败的样子 */
 .bubble-imgs img:not([src]) { width: 168px; height: 110px; background: #eef1f7; }
 .bubble-imgs img.broken { opacity: .55; border-style: dashed; }
+
+/* ---- 知识点汇总 ---- */
+.kp-mod { margin-bottom: 14px; }
+.kp-mod-h { display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+  font-weight: 600; color: var(--ink-2); margin: 10px 0 4px; }
+.kp-mod-h .tag { font-weight: 400; font-size: 11px; color: var(--ink-3); }
+.kp-row { display: grid; grid-template-columns: minmax(180px, 260px) 1fr 90px 46px;
+  gap: 10px; align-items: center; padding: 7px 8px; border-radius: 8px;
+  border-bottom: 1px dashed #f2f5fa; cursor: pointer; }
+.kp-row:hover { background: #f8faff; }
+.kp-nm { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.kp-sm { font-size: 12px; color: var(--ink-3); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.kp-meter { height: 6px; border-radius: 999px; background: #eef1f7; overflow: hidden; }
+.kp-meter i { display: block; height: 100%; border-radius: 999px; background: var(--brand); }
+.kp-meter i.weak { background: #dc2626; }
+.kp-meter i.good { background: #16a34a; }
+.kp-pct { font-size: 11.5px; color: var(--ink-3); text-align: right; }
+.kp-pct.weak { color: #b91c1c; }
+.kp-pct.good { color: #15803d; }
+.kp-blk { border-top: 1px dashed var(--line); padding: 9px 0; font-size: 13px; line-height: 1.7; }
+.kp-k { font-size: 11.5px; color: var(--ink-3); margin-bottom: 4px; letter-spacing: .3px; }
+.kp-blk.warn { background: #fff9f2; border-radius: 8px; padding: 9px 10px; margin: 6px 0; }
+.kp-blk.ok { background: #f3fbf6; border-radius: 8px; padding: 9px 10px; margin: 6px 0; }
+.kp-link { padding: 6px 0; border-bottom: 1px dashed #f2f5fa; font-size: 12.5px; }
+.kp-link:last-child { border-bottom: 0; }
+@media (max-width: 900px) {
+  .kp-row { grid-template-columns: 1fr 46px; row-gap: 4px; }
+  .kp-nm { grid-column: 1 / 2; grid-row: 1; }
+  .kp-pct { grid-column: 2 / 3; grid-row: 1; }
+  .kp-sm { grid-column: 1 / -1; grid-row: 2; white-space: normal; }
+  .kp-meter { grid-column: 1 / -1; grid-row: 3; }
+}

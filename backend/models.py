@@ -144,8 +144,17 @@ class KnowledgePoint(Base):
     subject_key: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     stage: Mapped[str] = mapped_column(String(16), default="senior")
+    # 第一次系统学这个知识点的年级；"all" = 贯穿型（比例、阅读理解这类跨年级能力）
+    grade: Mapped[str] = mapped_column(String(16), default="all")
+    # 模块（函数 / 力学 / 反应原理 ……），汇总页按它分组
+    module: Mapped[str] = mapped_column(String(32), default="")
     importance: Mapped[float] = mapped_column(Float, default=0.5)  # 考频/依赖数 → 重要度
     difficulty: Mapped[int] = mapped_column(Integer, default=3)
+    # 一句话要点 / 常见易错 / 记忆锚点 —— 「知识点提示」的三个落点
+    summary: Mapped[str | None] = mapped_column(Text, default=None)
+    pitfall: Mapped[str | None] = mapped_column(Text, default=None)
+    mnemonic: Mapped[str | None] = mapped_column(Text, default=None)
+    keywords: Mapped[str | None] = mapped_column(String(200), default=None)
 
 
 class KpDependency(Base):

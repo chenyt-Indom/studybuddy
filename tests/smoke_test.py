@@ -549,6 +549,63 @@ check("历史消息里带着图片附件",
 check("空消息自动补问法入库", "图片" in (huser.get("content") or ""),
       (huser.get("content") or "")[:24])
 
+print("24. 知识点汇总 / 提示 / 年级过滤 / 跨科联动")
+ov = c.get("/api/kp/overview", params={"stage": "senior"}).json()
+check("知识点汇总可读", ov.get("ok") is True, f"共 {ov.get('stats', {}).get('total_all')} 个")
+check("覆盖多科目", len(ov.get("subjects") or []) >= 5,
+      "/".join(s2["cn"] for s2 in ov.get("subjects") or []))
+check("知识点总数够用", (ov.get("stats") or {}).get("total_all", 0) >= 100,
+      f"{(ov.get('stats') or {}).get('total_all')}")
+first_items = [i for s2 in ov["subjects"] for m in s2["modules"] for i in m["items"]]
+check("每条都有要点", all(i.get("summary") for i in first_items[:40]))
+check("每条都有年级", all(i.get("grade_cn") for i in first_items[:40]))
+check("按模块分组", all(m.get("name") for s2 in ov["subjects"] for m in s2["modules"]))
+
+# 详情：三个提示字段 + 依赖 + 联动
+d = c.get("/api/kp/math.quadratic_function").json()
+it = d.get("item") or {}
+check("详情有要点/易错/锚点",
+      bool(it.get("summary")) and bool(it.get("pitfall")) and bool(it.get("mnemonic")),
+      it.get("mnemonic", ""))
+check("详情有前置知识", len(d.get("prerequisites") or []) >= 1,
+      "/".join(p["name"] for p in d.get("prerequisites") or []))
+check("详情有解锁知识", len(d.get("unlocks") or []) >= 1,
+      "/".join(p["name"] for p in d.get("unlocks") or []))
+check("详情有跨科联动", len(d.get("cross") or []) >= 1,
+      (d.get("cross") or [{}])[0].get("note", "")[:24])
+
+# 搜索：名称与口语别名都要能命中
+check("搜「抛物线」能命中二次函数",
+      any(x["name"] == "二次函数" for x in c.get("/api/kp/search",
+          params={"q": "抛物线"}).json()["items"]))
+check("搜「勒夏特列」能命中化学平衡",
+      any(x["name"] == "化学平衡" for x in c.get("/api/kp/search",
+          params={"q": "勒夏特列"}).json()["items"]))
+
+# 年级过滤：只给高一时，不该出现导数/圆锥曲线这类高二高三内容
+g1 = c.get("/api/kp/overview", params={"stage": "senior", "mode": "current",
+                                       "grade": "senior_1"}).json()
+names1 = [i["name"] for s2 in g1["subjects"] for m in s2["modules"] for i in m["items"]]
+check("仅本年级只返回该年级", g1["stats"]["total_shown"] > 0
+      and all(i["grade"] == "senior_1" for s2 in g1["subjects"]
+              for m in s2["modules"] for i in m["items"]),
+      f"{g1['stats']['total_shown']} 条")
+check("高一视图里没有导数/圆锥曲线", "导数" not in names1 and "圆锥曲线" not in names1)
+check("高二视图里才出现导数",
+      any(i["name"] == "导数" for s2 in c.get("/api/kp/overview", params={
+          "stage": "senior", "mode": "current", "grade": "senior_2"}).json()["subjects"]
+          for m in s2["modules"] for i in m["items"]))
+
+# 讲解 prompt：该有的段落都在（透明化预览走的就是真对话上下文）
+pv = c.get("/api/profile/prompt-preview",
+           params={"subject": "physics", "q": "平抛运动怎么算落地时间"}).json()
+sp = pv.get("system_prompt") or ""
+check("prompt 有年级约束", "【年级约束】" in sp)
+check("prompt 有知识点提示", "【知识点提示】" in sp and "记忆锚点" in sp)
+check("prompt 有跨科联动", "【跨科联动·记忆锚点】" in sp)
+check("prompt 有教材定位", "【教材定位】" in sp)
+check("教材名没重复出版社", "人教版 人教版" not in sp)
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

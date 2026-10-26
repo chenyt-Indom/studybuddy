@@ -370,6 +370,15 @@ def get_user_textbook(db: Session, user_id: int, subject_key: str) -> Textbook |
 
 
 # ---------------------------------------------------------------- 讲解注入
+def textbook_label(tb: Textbook) -> str:
+    """出版社 + 书名。书名里已经带了出版社就别再拼一遍（"人教版 人教版 …"）。"""
+    pub = (tb.publisher or "").strip()
+    title = (tb.title or "").strip()
+    if pub and title.startswith(pub):
+        return title
+    return f"{pub} {title}".strip()
+
+
 def _core_tokens(title: str) -> list[str]:
     """从章节标题里抠出核心词：去掉编号，按标点/连词切开。"""
     t = re.sub(r"^\s*\d{1,2}[.．]\d{1,2}\s*", "", title or "")
@@ -440,7 +449,7 @@ def build_textbook_context(
 
     if not pool:
         return {
-            "textbook": f"{tbs[0].publisher} {tbs[0].title}",
+            "textbook": textbook_label(tbs[0]),
             "volume": tbs[0].volume,
             "edition": tbs[0].edition_name,
             "edition_year": tbs[0].edition_year,
@@ -462,7 +471,7 @@ def build_textbook_context(
 
     main_tb = picked[0][2]
     return {
-        "textbook": f"{main_tb.publisher} {main_tb.title}",
+        "textbook": textbook_label(main_tb),
         "volume": main_tb.volume,
         "edition": main_tb.edition_name,
         "edition_year": main_tb.edition_year,
@@ -557,7 +566,7 @@ async def check_latest(db: Session, tb: Textbook) -> dict:
 
     return {
         "ok": True,
-        "textbook": f"{tb.publisher} {tb.title}",
+        "textbook": textbook_label(tb),
         "recorded_edition": f"{tb.edition_name or ''} {tb.edition_year or ''} 年版".strip(),
         "verdict": verdict,
         "sources": sources_public(results),

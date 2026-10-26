@@ -55,6 +55,14 @@ def _ensure_columns() -> None:
             "sources": "TEXT",
             "attachments": "TEXT",
         },
+        "knowledge_points": {
+            "grade": "VARCHAR(16) DEFAULT 'all'",
+            "module": "VARCHAR(32) DEFAULT ''",
+            "summary": "TEXT",
+            "pitfall": "TEXT",
+            "mnemonic": "TEXT",
+            "keywords": "VARCHAR(200)",
+        },
         "memories": {
             "scope": "VARCHAR(16) DEFAULT 'subject'",
             "evidence": "TEXT",

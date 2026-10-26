@@ -105,8 +105,18 @@ def overview(user: User = Depends(current_user), db: Session = Depends(get_db)):
 
 
 @router.get("/prompt-preview")
-def prompt_preview(subject: str = "math", user: User = Depends(current_user),
+def prompt_preview(subject: str = "math", q: str = "", user: User = Depends(current_user),
                    db: Session = Depends(get_db)):
-    """看看「同一个问题，你的 Prompt 长什么样」—— 专精化的透明化展示。"""
-    ctx = build_profile_context(db, user.id, subject)
-    return {"subject": subject, "system_prompt": build_tutor_prompt(ctx, subject)}
+    """看看「同一个问题，你的 Prompt 长什么样」—— 专精化的透明化展示。
+
+    用 build_context（和真对话同一条路），这样【知识点提示】【跨科联动】
+    【教材定位】都能看到；只给 profile 会漏掉这些真正体现"专精化"的部分。
+    """
+    from ..services.chat_service import build_context
+    from ..services.websearch import today_line
+
+    text = (q or "").strip() or "比如这道题我没思路，你帮我看看从哪下手"
+    ctx = build_context(db, user.id, subject, text)
+    ctx["time_line"] = today_line()
+    return {"subject": subject, "q": text,
+            "system_prompt": build_tutor_prompt(ctx, subject)}

@@ -14,11 +14,11 @@ from sqlalchemy import desc, select
 
 from ..config import MAX_TOKENS_MAP, TEMPERATURE_MAP, now_context, settings
 from ..db import session_scope
-from ..models import Conversation, KpMastery, Message
+from ..models import Conversation, KpMastery, Message, UserProfile
 from . import attachments as attach
 from .cross_subject.graph import cross_hint
 from .forgetting.scheduler import check_review_in_chat, ensure_review_state
-from .kp import candidates, match_kp_codes
+from .kp import candidates, hints_for, match_kp_codes
 from .llm import get_provider
 from .llm.vision import image_support
 from .memory.extractor import extract_memories, persist_memories
@@ -100,13 +100,23 @@ def build_context(db, user_id: int, subject_key: str, user_text: str) -> dict:
     seen = {m["id"] for m in mems}
     mems = gl + [m for m in mems if m["id"] not in seen]
     patterns = list_insights(db, user_id, subject_key)
-    kp_codes = match_kp_codes(db, subject_key, user_text, top=1)
-    cs = cross_hint(db, user_id, kp_codes[0]) if kp_codes else None
+    # 知识点召回按学生年级收口：高一不该被召回导数、圆锥曲线（专精化的一部分）
+    prof = db.scalar(select(UserProfile).where(UserProfile.user_id == user_id))
+    grade = (prof.grade if prof else "") or "senior_1"
+    kp_codes = match_kp_codes(db, subject_key, user_text, top=2, max_grade=grade)
+    cs = None
+    for code in kp_codes:
+        h = cross_hint(db, user_id, code)
+        if h and (cs is None or h.get("strength", 0) > cs.get("strength", 0)):
+            cs = h
     ctx = build_profile_context(
         db, user_id, subject_key,
         extra={"memories": mems, "patterns": patterns, "cross_subject": cs},
     )
     ctx["kp_hint"] = kp_codes
+    # 知识点提示：要点 / 常见易错 / 记忆锚点（讲解里直接能用）
+    ctx["kp_hints"] = hints_for(db, kp_codes)
+    ctx["grade"] = grade
     # 记忆综述（档案层）：比逐条记忆更省 token，也更能体现"整体理解"
     ctx["profile_docs"] = build_doc_context(db, user_id)
     # 教材定位：对齐课本章节

@@ -36,8 +36,13 @@ def _mastery(db: Session, user_id: int, kp_code: str) -> float | None:
 
 def cross_hint(db: Session, user_id: int, kp_code: str) -> dict | None:
     """给单个知识点找跨科关联 + 对方掌握度。用于对话 Prompt 注入和 UI 提示。"""
+    # 双向都要找：关联常常只存了一个方向（数学→物理），
+    # 但学生问的可能是另一端（物理题），只查 from_kp 会漏掉一半联动。
     links = db.scalars(
-        select(CrossSubjectLink).where(CrossSubjectLink.from_kp == kp_code)
+        select(CrossSubjectLink).where(
+            (CrossSubjectLink.from_kp == kp_code)
+            | (CrossSubjectLink.to_kp == kp_code)
+        )
     ).all()
     if not links:
         return None
@@ -45,10 +50,11 @@ def cross_hint(db: Session, user_id: int, kp_code: str) -> dict | None:
     kp_map = {kp.kp_code: kp for kp in db.scalars(select(KnowledgePoint))}
     best = None
     for link in links:
-        other = kp_map.get(link.to_kp)
+        other_code = link.to_kp if link.from_kp == kp_code else link.from_kp
+        other = kp_map.get(other_code)
         if not other:
             continue
-        other_m = _mastery(db, user_id, link.to_kp)
+        other_m = _mastery(db, user_id, other_code)
         # 对方越弱，越值得提醒
         weak = 0.5 if other_m is None else (1.0 - other_m)
         score = link.strength * 0.6 + weak * 0.4
@@ -57,7 +63,7 @@ def cross_hint(db: Session, user_id: int, kp_code: str) -> dict | None:
                 "_score": score,
                 "from_kp": kp_code,
                 "from_name": kp_map.get(kp_code).name if kp_map.get(kp_code) else kp_code,
-                "to_kp": link.to_kp,
+                "to_kp": other_code,
                 "related_kp": other.name,
                 "related_subject": other.subject_key,
                 "related_subject_cn": SUBJECT_CN.get(other.subject_key, other.subject_key),

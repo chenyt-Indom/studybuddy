@@ -22,6 +22,7 @@ const NAV = [
   ['chat', '学科对话', '💬'],
   ['dashboard', '学情看板', '📊'],
   ['review', '复习中心', '🔁'],
+  ['kp', '知识点', '📖'],
   ['mistakes', '错题本', '📕'],
   ['insight', '洞察', '💡'],
   ['memory', '记忆库', '🧠'],
@@ -188,7 +189,7 @@ function route() {
   // 给 <body> 打上当前视图标记：对话页要用它做「撑满剩余高度」的布局（见 style.css）
   document.body.dataset.view = state.view;
   ({ chat: viewChat, dashboard: viewDashboard, review: viewReview, mistakes: viewMistakes,
-     insight: viewInsight, memory: viewMemory, textbook: viewTextbook,
+     insight: viewInsight, kp: viewKp, memory: viewMemory, textbook: viewTextbook,
      profile: viewProfile, settings: viewSettings }[state.view] || viewChat)(m);
 }
 
@@ -1532,6 +1533,232 @@ async function viewMemory(root) {
   };
 
   await Promise.all([loadMeta(), loadDocs(), loadList()]);
+}
+
+/* ---------------- 视图：知识点汇总（含提示与跨科联动） ---------------- */
+const KP_STATE = { stage: 'senior', grade: '', subject: 'all', mode: 'all', q: '', open: '' };
+const KP_MODES = [
+  ['all', '全部'], ['learned', '已学过'], ['current', '仅本年级'],
+  ['weak', '我的薄弱'], ['due', '待复习'],
+];
+const KP_GRADES = {
+  primary: [['primary_1', '一年级'], ['primary_2', '二年级'], ['primary_3', '三年级'],
+            ['primary_4', '四年级'], ['primary_5', '五年级'], ['primary_6', '六年级']],
+  junior: [['junior_1', '初一'], ['junior_2', '初二'], ['junior_3', '初三']],
+  senior: [['senior_1', '高一'], ['senior_2', '高二'], ['senior_3', '高三']],
+};
+
+/* 从知识点页跳去问 AI：先把视图切到对话，再把问题填进输入框 */
+function askAbout(text) {
+  state.view = 'chat';
+  $$('.side nav a').forEach(x => x.classList.toggle('on', x.dataset.v === 'chat'));
+  route();
+  let n = 0;
+  const t = setInterval(() => {
+    const i = $('#inp');
+    n++;
+    if (i && !i.disabled) {
+      i.value = text; i.focus(); i.setSelectionRange(text.length, text.length);
+      clearInterval(t);
+    } else if (n > 40) clearInterval(t);
+  }, 100);
+}
+
+async function viewKp(root) {
+  root.innerHTML = `
+  <div class="page-h">
+    <div><h2>知识点汇总</h2>
+      <div class="desc">各年级各科的知识点 · 每个都带「一句话要点 / 常见易错 / 记忆锚点」</div></div>
+    <div class="row" style="gap:8px">
+      <select id="kpStage" style="width:auto">
+        <option value="senior">高中</option>
+        <option value="junior">初中</option>
+      </select>
+      <select id="kpGrade" style="width:auto"></select>
+      <select id="kpSubj" style="width:auto">
+        <option value="all">全部科目</option>
+        ${SUBJECTS.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <input id="kpQ" type="text" placeholder="搜知识点 / 别名 / 要点，例如：抛物线、楞次定律、盐类水解" style="flex:1;min-width:180px" />
+      <div class="row" id="kpModes" style="gap:6px;flex-wrap:wrap"></div>
+    </div>
+  </div>
+
+  <div class="grid g4" id="kpStats" style="margin-bottom:14px"></div>
+  <div id="kpList"><div class="empty">加载中…</div></div>
+  <div id="kpDetail"></div>`;
+
+  const fillGrades = () => {
+    const list = KP_GRADES[KP_STATE.stage] || [];
+    const sel = $('#kpGrade');
+    if (!sel) return;
+    sel.innerHTML = `<option value="">全部年级</option>` +
+      list.map(([k, n]) => `<option value="${k}">${n}</option>`).join('');
+    sel.value = KP_STATE.grade || '';
+  };
+
+  const renderModes = () => {
+    const box = $('#kpModes');
+    if (!box) return;
+    box.innerHTML = KP_MODES.map(([k, n]) => `<button class="btn sm"
+      data-mode="${k}" style="${KP_STATE.mode === k
+        ? 'background:var(--brand);border-color:var(--brand);color:#fff' : ''}">${n}</button>`).join('');
+    $$('#kpModes [data-mode]').forEach(b => {
+      b.onclick = () => { KP_STATE.mode = b.dataset.mode; renderModes(); load(); };
+    });
+  };
+
+  const kpRow = (it) => {
+    const pct = it.mastery == null ? 0 : Math.round(it.mastery * 100);
+    const cls = it.level === 'weak' ? 'weak' : (it.level === 'good' ? 'good' : '');
+    const cross = (it.cross || [])[0];
+    return `<div class="kp-row" data-code="${h(it.code)}">
+      <div class="kp-nm">
+        <b>${h(it.name)}</b>
+        <span class="pill">${h(it.grade_cn)}</span>
+        ${it.due ? '<span class="pill warn">待复习</span>' : ''}
+        ${it.learned ? '' : '<span class="pill">超前</span>'}
+        ${cross ? `<span class="pill brand" title="${h(cross.note || '')}">联动 ${h(cross.subject_cn)}</span>` : ''}
+      </div>
+      <div class="kp-sm">${h(it.summary || '')}</div>
+      <div class="kp-meter"><i class="${cls}" style="width:${pct}%"></i></div>
+      <div class="kp-pct ${cls}">${it.mastery == null ? '未测' : pct + '%'}</div>
+    </div>`;
+  };
+
+  const renderList = (subjects) => {
+    const box = $('#kpList');
+    if (!box) return;
+    if (!subjects.length) {
+      box.innerHTML = `<div class="card"><div class="empty">
+        这个条件下没有知识点。试试切回「全部」或清空搜索词。</div></div>`;
+      return;
+    }
+    box.innerHTML = subjects.map(s => `
+      <div class="card" style="margin-bottom:14px">
+        <h3>${h(s.cn)}
+          <span class="tag">${s.total} 个 · 薄弱 ${s.weak} · 待复习 ${s.due}</span></h3>
+        ${s.modules.map(m => `
+          <div class="kp-mod">
+            <div class="kp-mod-h">${h(m.name)}<span class="tag">${m.items.length}</span></div>
+            ${m.items.map(kpRow).join('')}
+          </div>`).join('')}
+      </div>`).join('');
+    $$('#kpList .kp-row').forEach(row => {
+      row.onclick = () => openDetail(row.dataset.code);
+    });
+  };
+
+  const renderStats = (st) => {
+    const box = $('#kpStats');
+    if (!box) return;
+    const cells = [
+      ['本页知识点', st.total_shown, `共 ${st.total_all} 个`],
+      ['已学过', st.learned, '按我的年级算'],
+      ['我的薄弱', st.weak, st.unknown ? `另有 ${st.unknown} 个未测` : '掌握度 < 50%'],
+      ['待复习', st.due, '按遗忘曲线到期'],
+    ];
+    box.innerHTML = cells.map(([t, v, s2]) => `
+      <div class="card"><div class="hint">${t}</div>
+        <div class="stat">${v}<small>${s2}</small></div></div>`).join('');
+  };
+
+  const openDetail = async (code) => {
+    KP_STATE.open = code;
+    const box = $('#kpDetail');
+    if (box) box.innerHTML = '<div class="empty">加载中…</div>';
+    try {
+      const r = await api.get('/api/kp/' + encodeURIComponent(code));
+      if (!r.ok || !$('#kpDetail')) { if (box) box.innerHTML = `<div class="empty">${h(r.message || '读取失败')}</div>`; return; }
+      const it = r.item;
+      const cross = (r.cross || []).map(c => `
+        <div class="kp-link">
+          <b>${h(c.name)}</b>
+          <span class="pill">${h(c.subject_cn)}</span>
+          <span class="pill">${h(c.relation_cn)}</span>
+          <div class="hint">${h(c.note || '')}</div>
+        </div>`).join('') || '<div class="hint">暂无跨科联动</div>';
+      const pre = (r.prerequisites || []).map(p =>
+        `<span class="pill">${h(p.name)}</span>`).join('') || '<span class="hint">无</span>';
+      const nxt = (r.unlocks || []).map(p =>
+        `<span class="pill">${h(p.name)}</span>`).join('') || '<span class="hint">无</span>';
+      const mv = r.mastery ? Math.round(r.mastery.value * 100) + '%' : '未测';
+      $('#kpDetail').innerHTML = `
+        <div class="card" id="kpDetailCard" style="margin-bottom:14px;border-left:3px solid var(--brand)">
+          <h3>${h(it.name)}
+            <span class="tag">${h(it.subject_cn)} · ${h(it.module || '')} · ${h(it.grade_cn)} · 难度 ${it.difficulty}/5</span>
+            <div class="spacer"></div>
+            <button class="btn sm" id="kpAsk">去问 AI</button>
+            <button class="btn sm" id="kpClose">关闭</button></h3>
+          <div class="kp-blk"><div class="kp-k">一句话要点</div><div>${h(it.summary || '—')}</div></div>
+          <div class="kp-blk warn"><div class="kp-k">常见易错</div><div>${h(it.pitfall || '—')}</div></div>
+          <div class="kp-blk ok"><div class="kp-k">记忆锚点</div><div>${h(it.mnemonic || '—')}</div></div>
+          <div class="kp-blk"><div class="kp-k">前置 / 解锁</div>
+            <div>前置：${pre}</div><div style="margin-top:6px">学完能解锁：${nxt}</div></div>
+          <div class="kp-blk"><div class="kp-k">跨科联动（用已会的锚定新学的）</div>${cross}</div>
+          <div class="kp-blk"><div class="kp-k">我的情况</div>
+            <div class="hint">掌握度 ${mv} · 错题 ${r.mistakes} 道 ·
+            ${r.review ? `下次复习 ${h(r.review.next_review)}` : '还没排复习'}</div></div>
+        </div>`;
+      $('#kpClose').onclick = () => { $('#kpDetail').innerHTML = ''; };
+      $('#kpAsk').onclick = () => askAbout(
+        `请讲讲「${it.name}」，重点讲我容易错的地方，再给我一个能记住的说法。`);
+      $('#kpDetailCard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {
+      if ($('#kpDetail')) $('#kpDetail').innerHTML = `<div class="empty">${h(e.message)}</div>`;
+    }
+  };
+
+  const load = async () => {
+    try {
+      const qs = new URLSearchParams({
+        stage: KP_STATE.stage, subject: KP_STATE.subject,
+        mode: KP_STATE.mode, q: KP_STATE.q, grade: KP_STATE.grade || '',
+      });
+      const r = await api.get('/api/kp/overview?' + qs.toString());
+      if (!$('#kpList')) return;
+      if (!KP_STATE.grade && r.grade) {
+        // 用画像里的年级做默认，并回填到下拉框
+        const sel = $('#kpGrade');
+        if (sel && (KP_GRADES[KP_STATE.stage] || []).some(([k]) => k === r.grade)) {
+          sel.value = r.grade;
+        }
+      }
+      renderStats(r.stats || {});
+      renderList(r.subjects || []);
+      if (KP_STATE.open) openDetail(KP_STATE.open);
+    } catch (e) {
+      if ($('#kpList')) $('#kpList').innerHTML = `<div class="card"><div class="empty">${h(e.message)}</div></div>`;
+    }
+  };
+
+  fillGrades();
+  renderModes();
+  $('#kpStage').value = KP_STATE.stage;
+  $('#kpStage').onchange = () => {
+    KP_STATE.stage = $('#kpStage').value;
+    KP_STATE.grade = '';
+    KP_STATE.open = '';
+    fillGrades();
+    if ($('#kpDetail')) $('#kpDetail').innerHTML = '';
+    load();
+  };
+  $('#kpGrade').onchange = () => { KP_STATE.grade = $('#kpGrade').value; load(); };
+  $('#kpSubj').onchange = () => { KP_STATE.subject = $('#kpSubj').value; load(); };
+  $('#kpQ').value = KP_STATE.q;
+  let kpT = null;
+  $('#kpQ').oninput = () => {
+    KP_STATE.q = $('#kpQ').value.trim();
+    clearTimeout(kpT);
+    kpT = setTimeout(load, 250);
+  };
+
+  await load();
 }
 
 /* ---------------- 视图：教材 ---------------- */
