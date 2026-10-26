@@ -674,6 +674,23 @@ studybuddy/
 
 ---
 
+## 九点五、部署到服务器
+
+本机跑通之后要放到公网，完整手册见 **[`deploy/README.md`](deploy/README.md)**（12 节：代码上传、
+venv、Key 配置、systemd、Nginx + HTTPS、两层防火墙、验收清单、更新、备份、常见坑）。
+
+现成的三份配置直接在 `deploy/` 里：
+
+| 文件 | 用途 |
+|---|---|
+| `studybuddy.service` | systemd 单元（开机自启、崩溃拉起、固定单 worker —— SQLite 与每晚整理任务都不能多进程） |
+| `nginx-studybuddy.conf` | 反代配置（`client_max_body_size 12m` 否则图片 413；`proxy_buffering off` 否则 SSE 被憋住） |
+| `install.sh` | 把「建用户→venv→依赖→.env→systemd→自检」一键串起来（nginx 与证书仍需手动，取决于你的域名） |
+
+**Linux 上有个必须知道的差异**：Key 加密用的是 Windows DPAPI，Linux 没有 → 在网页里保存会退化成
+`base64 明文 + chmod 600`。所以服务器上请用 `.env` 环境变量（systemd `EnvironmentFile`），
+别搬 Windows 的 `data/secrets.bin`（DPAPI 密文换机器解不开）。
+
 ## 十、测试
 
 ```bash

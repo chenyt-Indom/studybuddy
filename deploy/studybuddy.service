@@ -1,0 +1,41 @@
+[Unit]
+Description=StudyBuddy 智能学习助手
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=studybuddy
+Group=studybuddy
+WorkingDirectory=/opt/studybuddy
+
+# .env 里放 DEEPSEEK_API_KEY 等（Linux 上没有 DPAPI，环境变量比落盘明文更安全）
+# 前面加 - 表示文件不存在也不报错
+EnvironmentFile=-/opt/studybuddy/.env
+Environment=PYTHONUNBUFFERED=1
+
+# ⚠️ 必须 --workers 1：
+#   1) SQLite 单文件，多进程写会互相锁
+#   2) 每晚自动整理是用 lifespan 里的 asyncio 任务，多 worker 会跑好几份
+ExecStart=/opt/studybuddy/.venv/bin/python -m uvicorn backend.main:app \
+    --host 127.0.0.1 --port 8787 --workers 1 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1
+
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=studybuddy
+
+# ---- 加固：够用就好，别把 data 也锁死（要写库和图片）----
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/studybuddy/data
+
+[Install]
+WantedBy=multi-user.target
