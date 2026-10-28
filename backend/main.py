@@ -27,6 +27,7 @@ from .api import (
     review,
     system,
     textbook,
+    weekly,
 )
 from .config import BASE_DIR, settings
 from .db import init_db
@@ -94,6 +95,7 @@ for r in (
     memory.router,
     textbook.router,
     system.router,
+    weekly.router,
 ):
     app.include_router(r)
 

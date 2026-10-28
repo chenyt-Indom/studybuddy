@@ -634,6 +634,31 @@ check("关闭后讲解 prompt 里没有教材摘录段",
       "【教材摘录】" not in c.get("/api/profile/prompt-preview",
                                   params={"subject": "physics"}).json()["system_prompt"])
 
+print("26. 学习周报：生成 / 取回 / 数据口径")
+w0 = c.get("/api/weekly/latest").json()
+check("周报接口可用", w0.get("ok") is True, "是否已有：" + str(w0.get("exists")))
+wg = c.post("/api/weekly/generate").json()
+check("能生成本周周报", wg.get("ok") is True and bool(wg.get("content")),
+      f"来源 {wg.get('source')}，{len(wg.get('content') or '')} 字")
+check("周报带本周起止日期", wg.get("week_start", "") <= wg.get("week_end", ""),
+      f"{wg.get('week_start')} ~ {wg.get('week_end')}")
+st = wg.get("stats") or {}
+check("统计快照字段齐全",
+      all(k in st for k in ("qa_count", "new_mistakes", "review_due", "weak_kps", "exams")),
+      f"qa={st.get('qa_count')} 错题={st.get('new_mistakes')} 待复习={st.get('review_due')}")
+check("周报正文有结构（小标题）", "##" in (wg.get("content") or ""))
+w1 = c.get("/api/weekly/latest").json()
+check("能取回已生成的周报", w1.get("exists") is True and w1.get("week_start") == wg.get("week_start"),
+      w1.get("week_start"))
+wl = c.get("/api/weekly/list").json()
+check("历史列表可用", wl.get("ok") is True and len(wl.get("items") or []) >= 1,
+      f"{len(wl.get('items') or [])} 条")
+# 同一周重复生成不该产生多条记录
+c.post("/api/weekly/generate")
+wl2 = c.get("/api/weekly/list").json()
+same_week = [x for x in wl2["items"] if x["week_start"] == wg["week_start"]]
+check("同一周重复生成不重复入库", len(same_week) == 1, f"{len(same_week)} 条")
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

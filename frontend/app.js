@@ -960,7 +960,14 @@ async function viewInsight(root) {
       <div class="card"><h3>知识断层</h3><div id="gaps"></div></div>
     </div>
     <div style="height:16px"></div>
-    <div class="card"><h3>全部洞察</h3><div id="list"></div></div>`;
+    <div class="card"><h3>全部洞察</h3><div id="list"></div></div>
+    <div style="height:16px"></div>
+    <div class="card">
+      <h3>本周学习周报 <span class="tag" id="wkTag"></span>
+        <div class="spacer"></div>
+        <button class="btn sm" id="wkGen">生成 / 刷新</button></h3>
+      <div id="weekly"><div class="empty">还没生成过周报</div></div>
+    </div>`;
 
   const load = async () => {
     try {
@@ -990,6 +997,40 @@ async function viewInsight(root) {
     } catch (e) { toast(e.message, true); }
   };
 
+  // ---------- 学习周报 ----------
+  const renderWeekly = (r) => {
+    if (!$('#weekly')) return;
+    const tag = $('#wkTag');
+    if (!r || !r.exists) {
+      if (tag) tag.textContent = '';
+      $('#weekly').innerHTML = `<div class="empty">这周还没生成周报。
+        点右上角「生成 / 刷新」——会统计本周的问答、错题、考试、复习和薄弱点。</div>`;
+      return;
+    }
+    if (tag) {
+      tag.textContent = `${r.week_start} ~ ${r.week_end} · ${r.source === 'llm' ? 'AI 生成' : '数字模板'}`;
+    }
+    $('#weekly').innerHTML = `<div class="doc-body" style="white-space:normal">
+      ${md(r.content || '')}</div>`;
+  };
+
+  const loadWeekly = async () => {
+    try { renderWeekly(await api.get('/api/weekly/latest')); }
+    catch (e) { if ($('#weekly')) $('#weekly').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+  };
+
+  $('#wkGen').onclick = async () => {
+    const btn = $('#wkGen');
+    btn.disabled = true;
+    btn.textContent = '生成中…';
+    try {
+      const r = await api.post('/api/weekly/generate');
+      renderWeekly({ ...r, exists: true });
+      toast(r.source === 'llm' ? '周报已生成' : '已用数字模板生成（模型不可用）');
+    } catch (e) { toast(e.message, true); }
+    finally { btn.disabled = false; btn.textContent = '生成 / 刷新'; }
+  };
+
   $('#run').onclick = async () => {
     try {
       const r = await api.post('/api/insight/run');
@@ -998,6 +1039,7 @@ async function viewInsight(root) {
     } catch (e) { toast(e.message, true); }
   };
   await load();
+  await loadWeekly();
 }
 
 /* ---------------- 视图：档案 ---------------- */

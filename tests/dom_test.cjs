@@ -230,6 +230,16 @@ async function waitFor(fn, timeout = 8000, step = 120) {
     }
   }
 
+  // 洞察页：学习周报卡片
+  Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'insight')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const wkOk = await waitFor(() => doc.querySelector('#weekly'), 12000);
+  check('洞察页有学习周报卡片', wkOk && !!doc.querySelector('#wkGen'));
+  const wkLoaded = await waitFor(() => doc.querySelector('#weekly') &&
+    doc.querySelector('#weekly').textContent.trim().length > 6, 15000);
+  check('周报区域已渲染内容', wkLoaded,
+        ((doc.querySelector('#weekly') || {}).textContent || '').trim().slice(0, 30));
+
   // 记忆库页：开关 + 管理按钮 + 档案区
   const memLink = Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'memory');
   memLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
