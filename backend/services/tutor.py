@@ -111,6 +111,29 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
             + "\n".join(blocks)
         )
 
+    # ①e2 课本原文（用户导入的教材）：最硬的依据，用来"照本讲"
+    tb_text = ctx.get("textbook_text") or {}
+    if tb_text.get("items"):
+        blocks = []
+        total = 0
+        for i, it in enumerate(tb_text["items"], 1):
+            head = f"[{i}]《{it.get('textbook') or '教材'}》{it.get('chapter') or ''} {it.get('section') or ''}"
+            body = (it.get("snippet") or "").replace("\n", " ").strip()
+            block = f"{head}\n{body}"
+            if total + len(block) > 1800:
+                break
+            blocks.append(block)
+            total += len(block)
+        if blocks:
+            parts.append(
+                "【课本原文】以下是从**学生自己导入的教材**里检索到的原文片段（最可信的依据）。\n"
+                "用法：\n"
+                "1. 讲解时**优先对齐课本的术语、符号、例题顺序**，学生问「课本怎么说的」就照这段讲；\n"
+                "2. 引用时说清是哪一节（例如「你课本第四章第 2 节里是这样定义的」）；\n"
+                "3. **不要整段照抄**，用自己的话讲，但结论必须和原文一致；\n"
+                "4. 原文里没有的内容，不要假装课本里有。\n\n" + "\n\n".join(blocks)
+            )
+
     # ①f 外部教材摘录（IMA）：用来校准术语/顺序，不是拿来照抄的
     ext = ctx.get("ext_textbook") or {}
     if ext.get("items"):

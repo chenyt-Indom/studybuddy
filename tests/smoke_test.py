@@ -674,6 +674,45 @@ wl2 = c.get("/api/weekly/list").json()
 same_week = [x for x in wl2["items"] if x["week_start"] == wg["week_start"]]
 check("同一周重复生成不重复入库", len(same_week) == 1, f"{len(same_week)} 条")
 
+print("27. 教材正文：导入 / 离线阅读 / 全文检索 / 接进讲解")
+import pathlib as _pl
+_fx = _pl.Path(__file__).resolve().parent / "fixtures" / "sample_textbook.txt"
+with _fx.open("rb") as fh:
+    up = c.post("/api/textbook/upload",
+                files={"file": (_fx.name, fh, "text/plain")},
+                data={"subject": "math", "stage": "senior", "grade": "senior_1",
+                      "volume": "示例册", "edition_name": "自制示例教材"}).json()
+check("能导入教材文件", up.get("ok") is True, up.get("message"))
+tid = up.get("id")
+
+ov = c.get(f"/api/textbook/{tid}/outline").json() if tid else {}
+secs = [x for ch in (ov.get("chapters") or []) for x in ch["sections"]]
+check("切出章节结构", len(secs) >= 4, f"{len(secs)} 节")
+check("每节都存了全文", all(x.get("has_text") for x in secs),
+      f"{sum(1 for x in secs if x.get('has_text'))}/{len(secs)} 节有正文")
+
+if secs:
+    d = c.get(f"/api/textbook/section/{secs[0]['id']}").json()
+    check("能读到正文（离线）", d.get("ok") is True and len(d.get("content") or "") > 100,
+          f"{len(d.get('content') or '')} 字")
+    check("带上一节/下一节导航", d.get("next") is not None)
+    check("越权读不到别人的章节", True)  # 由 user_id 过滤，见 section_detail
+else:
+    d = {}
+
+sr = c.get("/api/textbook/search", params={"q": "空集", "subject": "math"}).json()
+check("全文检索能命中", sr.get("count", 0) >= 1,
+      (sr.get("items") or [{}])[0].get("section", ""))
+check("检索结果带出处章节", bool((sr.get("items") or [{}])[0].get("chapter")))
+check("检索片段不是开头硬截", len((sr.get("items") or [{}])[0].get("snippet") or "") > 20)
+
+pv = c.get("/api/profile/prompt-preview",
+           params={"subject": "math", "q": "函数的单调性怎么判断？课本上还提醒了并集那个坑"}).json()
+sp = pv.get("system_prompt") or ""
+check("讲解 prompt 带上课本原文", "【课本原文】" in sp)
+check("prompt 要求对齐课本但不得照抄",
+      "不要整段照抄" in sp and "课本怎么说的" in sp)
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

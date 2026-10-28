@@ -276,6 +276,10 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   await waitFor(() => doc.querySelector('#tbEditions button.primary'), 12000);
   const hlBefore = Array.from(doc.querySelectorAll('#tbEditions button.primary'))
     .map(b => b.textContent.trim());
+  check('教材页有课本阅读器容器', !!doc.querySelector('#tbReader'));
+  check('章节行可点击打开正文',
+        doc.querySelectorAll('#tbOutline .tb-sec').length > 0,
+        `${doc.querySelectorAll('#tbOutline .tb-sec').length} 行`);
   check('当前册有高亮', hlBefore.length === 1, hlBefore.join(','));
 
   const outlineBefore = (doc.querySelector('#tbOutline') || {}).textContent || '';

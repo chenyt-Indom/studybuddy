@@ -64,6 +64,9 @@ def _ensure_columns() -> None:
             "sources": "TEXT",
             "attachments": "TEXT",
         },
+        "textbook_sections": {
+            "content": "TEXT",
+        },
         "knowledge_points": {
             "grade": "VARCHAR(16) DEFAULT 'all'",
             "module": "VARCHAR(32) DEFAULT ''",

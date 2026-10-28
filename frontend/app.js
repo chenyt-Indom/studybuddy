@@ -1882,9 +1882,11 @@ async function viewTextbook(root) {
   </div>
 
   <div class="card">
-    <h3>章节结构 <span class="tag">讲解时按这里定位到「第几章第几节」</span></h3>
+    <h3>章节结构 <span class="tag">点任意一节可直接看课本原文（离线可用）</span></h3>
     <div id="tbOutline"><div class="empty">选一本教材查看结构</div></div>
   </div>
+
+  <div class="card" id="tbReader" style="display:none"></div>
 
   <div id="tbDialog"></div>`;
 
@@ -2042,19 +2044,65 @@ async function viewTextbook(root) {
           <span class="pill">${h(r.volume || '')}</span>
           <span class="pill">${h(r.publisher)}</span>
           <span class="hint">${(r.chapters || []).length} 章 · ${total} 节</span>
+          <div class="spacer"></div>
+          ${(r.chapters || []).some(c => c.sections.some(x => !x.has_text))
+            ? `<button class="btn sm" id="tbRefill" data-tb="${r.id}">补全正文</button>` : ''}
         </div>
         ${(r.chapters || []).map(c => `
           <div style="margin-bottom:12px">
             <div style="font-weight:600;font-size:13.5px;margin-bottom:6px">${h(c.chapter)}</div>
             ${c.sections.map(s => `
-              <div class="row" style="padding:5px 0 5px 14px;border-bottom:1px dashed #f4f6fb;font-size:12.5px">
-                <span style="color:#5a6577">${h(s.section)}</span>
+              <div class="row tb-sec" data-sec="${s.id}" data-text="${s.has_text ? 1 : 0}"
+                   style="padding:5px 0 5px 14px;border-bottom:1px dashed #f4f6fb;font-size:12.5px;cursor:pointer">
+                <span style="color:#5a6577">${s.has_text ? '📄' : '·'} ${h(s.section)}</span>
                 <div class="spacer"></div>
                 ${(s.kp_codes || []).map(k => `<span class="pill" style="font-size:10px">${h(k)}</span>`).join('')}
-                ${s.chars ? `<span class="hint">${s.chars} 字</span>` : ''}
+                ${s.chars ? `<span class="hint">${s.chars} 字</span>` : '<span class="hint">无正文</span>'}
               </div>`).join('')}
           </div>`).join('')}`;
+      // 章节行 → 打开阅读器；补全正文 → 重解析回填
+      $$('#tbOutline .tb-sec').forEach(row => {
+        row.onclick = () => openReader(Number(row.dataset.sec));
+      });
+      const rf = $('#tbRefill');
+      if (rf) rf.onclick = async () => {
+        rf.disabled = true; rf.textContent = '解析中…';
+        try {
+          const res = await api.post(`/api/textbook/${rf.dataset.tb}/refill`);
+          toast(res.message || '已处理');
+          showOutline(Number(rf.dataset.tb));
+        } catch (e) { toast(e.message, true); rf.disabled = false; rf.textContent = '补全正文'; }
+      };
     } catch (e) { $('#tbOutline').innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+  };
+
+  // ---------- 课本阅读器（离线读正文）----------
+  const openReader = async (secId) => {
+    const box = $('#tbReader');
+    if (!box) return;
+    box.style.display = 'block';
+    box.innerHTML = '<div class="empty">加载正文…</div>';
+    try {
+      const r = await api.get('/api/textbook/section/' + secId);
+      if (!$('#tbReader')) return;
+      if (!r.ok) { box.innerHTML = `<div class="empty">${h(r.message)}</div>`; return; }
+      box.innerHTML = `
+        <h3>${h(r.chapter)} ${h(r.section)}
+          <span class="tag">《${h(r.textbook)}》· ${r.chars} 字${r.has_full_text ? '' : '（仅摘录）'}</span>
+          <div class="spacer"></div>
+          ${r.prev ? `<button class="btn sm" id="tbPrev">上一节</button>` : ''}
+          ${r.next ? `<button class="btn sm" id="tbNext">下一节</button>` : ''}
+          <button class="btn sm ghost" id="tbClose">关闭</button></h3>
+        <div class="doc-body" style="max-height:60vh;overflow:auto;white-space:pre-wrap;line-height:1.9">
+${h(r.content || '（这一节没有正文，点上面的「补全正文」重新解析原文件）')}</div>
+        <div class="hint" style="margin-top:10px">正文来自你本机导入的教材文件，只存在这台电脑上，不会上传。</div>`;
+      $('#tbClose').onclick = () => { box.style.display = 'none'; box.innerHTML = ''; };
+      if (r.prev) $('#tbPrev').onclick = () => openReader(r.prev.id);
+      if (r.next) $('#tbNext').onclick = () => openReader(r.next.id);
+      box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {
+      box.innerHTML = `<div class="empty">${h(e.message)}</div>`;
+    }
   };
 
   // ---------- 上传 ----------

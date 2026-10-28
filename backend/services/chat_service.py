@@ -126,6 +126,12 @@ def build_context(db, user_id: int, subject_key: str, user_text: str) -> dict:
         )
     except Exception:
         ctx["textbook"] = None
+    # 课本原文：只有用户自己导入过正文才有内容；没有就不占 prompt
+    try:
+        from .textbook import textbook_context
+        ctx["textbook_text"] = textbook_context(db, user_id, subject_key, user_text)
+    except Exception:
+        ctx["textbook_text"] = None
     return ctx
 
 

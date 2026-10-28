@@ -23,6 +23,9 @@ from ..services.textbook import (
     import_outline_text,
     list_textbooks,
     outline,
+    refill_contents,
+    search_sections,
+    section_detail,
     set_user_textbook,
 )
 
@@ -105,6 +108,32 @@ def create_outline(body: OutlineIn, user: User = Depends(current_user),
         set_user_textbook(db, user.id, body.subject, res["code"])
         db.commit()
     return res
+
+
+@router.get("/section/{section_id}")
+def get_section(section_id: int, user: User = Depends(current_user),
+                db: Session = Depends(get_db)):
+    """读某一节的正文（离线可读，数据来自自己导入的教材）。"""
+    data = section_detail(db, section_id, user.id)
+    if not data:
+        return {"ok": False, "message": "章节不存在或不属于你"}
+    return {"ok": True, **data}
+
+
+@router.get("/search")
+def search_text(q: str = Query(""), subject: str = Query(""),
+                user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """在自己导入的教材正文里搜原话（给"课本上怎么说的"这类问题用）。"""
+    items = search_sections(db, user.id, q, subject=subject, limit=8)
+    return {"ok": True, "q": q, "count": len(items), "items": items}
+
+
+@router.post("/{tb_id}/refill")
+def refill(tb_id: int, user: User = Depends(current_user),
+           db: Session = Depends(get_db)):
+    """给早先只导入结构的教材补正文（重新解析原文件）。"""
+    r = refill_contents(db, tb_id)
+    return r
 
 
 @router.get("/{tb_id}/outline")

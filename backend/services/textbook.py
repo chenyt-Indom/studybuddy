@@ -200,7 +200,9 @@ def import_file(
                 kp_codes=json.dumps(kps, ensure_ascii=False),
                 keywords="",
                 char_count=len(body),
-                excerpt=body[:300] or None,  # 只留本地检索用片段
+                # content 存全文：离线阅读和模型引用都靠它
+                content=body or None,
+                excerpt=body[:300] or None,
             )
         )
     db.flush()
@@ -263,6 +265,159 @@ def import_outline_text(
 
 
 # ---------------------------------------------------------------- 查询
+# ---------------------------------------------------------------- 正文：阅读 / 检索 / 补全
+def section_detail(db: Session, section_id: int, user_id: int) -> dict | None:
+    """单节正文 + 上下节导航。只允许读自己导入的教材。"""
+    from ..models import TextbookSection
+
+    sec = db.get(TextbookSection, section_id)
+    if not sec:
+        return None
+    tb = db.get(Textbook, sec.textbook_id)
+    if not tb or (tb.user_id not in (None, user_id)):
+        return None
+
+    sibs = db.scalars(
+        select(TextbookSection)
+        .where(TextbookSection.textbook_id == sec.textbook_id)
+        .order_by(TextbookSection.order_index)
+    ).all()
+    idx = next((i for i, x in enumerate(sibs) if x.id == sec.id), -1)
+
+    def _brief(o):
+        return {"id": o.id, "section": o.section} if o else None
+
+    return {
+        "id": sec.id,
+        "textbook": tb.title,
+        "chapter": sec.chapter,
+        "section": sec.section,
+        "content": sec.content or sec.excerpt or "",
+        "chars": sec.char_count,
+        "has_full_text": bool(sec.content),
+        "prev": _brief(sibs[idx - 1]) if idx > 0 else None,
+        "next": _brief(sibs[idx + 1]) if 0 <= idx < len(sibs) - 1 else None,
+    }
+
+
+def _bigrams(s: str) -> set[str]:
+    t = "".join((s or "").split())
+    return {t[i:i + 2] for i in range(len(t) - 1)}
+
+
+def search_sections(db: Session, user_id: int, query: str, *,
+                    subject: str = "", limit: int = 4) -> list[dict]:
+    """在**自己导入的教材正文**里检索（char bigram 打分，零依赖）。
+
+    为什么要这个而不是只靠向量库：课本原文是最硬的依据，
+    用户问「课本上怎么说的」时必须能原样摘出来。
+    """
+    from ..models import TextbookSection
+
+    q = (query or "").strip()
+    if not q:
+        return []
+    qb = _bigrams(q)
+    if not qb:
+        return []
+
+    rows = db.execute(
+        select(TextbookSection, Textbook)
+        .join(Textbook, Textbook.id == TextbookSection.textbook_id)
+        .where(Textbook.user_id == user_id)
+    ).all()
+
+    scored = []
+    for sec, tb in rows:
+        if subject and tb.subject_key != subject:
+            continue
+        body = sec.content or sec.excerpt or ""
+        if not body:
+            continue
+        hay = (sec.chapter or "") + (sec.section or "") + body
+        tb_set = _bigrams(hay)
+        hit = len(qb & tb_set)
+        if not hit:
+            continue
+        # 标题命中加权：问「等比数列」时，标题就带这词的节更有价值
+        title_hit = len(qb & _bigrams((sec.chapter or "") + (sec.section or "")))
+        score = hit / (len(qb) ** 0.5) + title_hit * 1.5
+        scored.append((score, sec, tb, body))
+
+    scored.sort(key=lambda x: -x[0])
+    out = []
+    for score, sec, tb, body in scored[:limit]:
+        out.append({
+            "id": sec.id,
+            "textbook": tb.title,
+            "chapter": sec.chapter,
+            "section": sec.section,
+            "snippet": _best_window(body, qb, 260),
+            "score": round(score, 2),
+            "has_full_text": bool(sec.content),
+        })
+    return out
+
+
+def _best_window(body: str, qb: set[str], size: int = 260) -> str:
+    """挑命中密度最高的一段，别总返回开头 260 字。"""
+    flat = " ".join(body.split())
+    if len(flat) <= size:
+        return flat
+    best, best_hit = flat[:size], -1
+    step = max(40, size // 4)
+    for i in range(0, max(1, len(flat) - size), step):
+        win = flat[i:i + size]
+        h = len(qb & _bigrams(win))
+        if h > best_hit:
+            best, best_hit = win, h
+    return best
+
+
+def textbook_context(db: Session, user_id: int, subject_key: str, query: str,
+                     limit: int = 3) -> dict | None:
+    """给对话用的课本原文上下文。没导入过正文就返回 None（不占 prompt）。"""
+    hits = search_sections(db, user_id, query, subject=subject_key, limit=limit)
+    if not hits:
+        return None
+    return {"items": hits, "from": "local_textbook"}
+
+
+def refill_contents(db: Session, tb_id: int) -> dict:
+    """给「之前只导入了结构」的教材补正文：重新解析原文件，按顺序回填。"""
+    from ..models import TextbookSection
+
+    tb = db.get(Textbook, tb_id)
+    if not tb:
+        return {"ok": False, "message": "教材不存在"}
+    if not tb.file_path or not Path(tb.file_path).exists():
+        return {"ok": False, "message": "原始文件已不在，请重新上传"}
+
+    text, pages, err = _extract_text(Path(tb.file_path))
+    if not text:
+        return {"ok": False, "message": err or "解析不出文本（可能是扫描版）"}
+
+    secs = split_structure(text)
+    rows = db.scalars(
+        select(TextbookSection)
+        .where(TextbookSection.textbook_id == tb_id)
+        .order_by(TextbookSection.order_index)
+    ).all()
+    filled = 0
+    for i, row in enumerate(rows):
+        if row.content:
+            continue
+        body = secs[i]["text"] if i < len(secs) else ""
+        if body:
+            row.content = body
+            row.char_count = len(body)
+            row.excerpt = body[:300]
+            filled += 1
+    db.commit()
+    return {"ok": True, "filled": filled, "total": len(rows),
+            "message": f"已回填 {filled}/{len(rows)} 节正文"}
+
+
 def list_textbooks(db: Session, user_id: int, subject_key: str | None = None) -> list[dict]:
     q = select(Textbook).where(
         (Textbook.bundled == True) | (Textbook.user_id == user_id)  # noqa: E712
@@ -311,6 +466,7 @@ def outline(db: Session, textbook_id: int, user_id: int) -> dict | None:
                 "order": s.order_index,
                 "kp_codes": json.loads(s.kp_codes) if s.kp_codes else [],
                 "chars": s.char_count,
+                "has_text": bool(s.content),
                 "excerpt": (s.excerpt or "")[:120],
             }
         )

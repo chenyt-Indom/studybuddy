@@ -507,7 +507,9 @@ class TextbookSection(Base):
     kp_codes: Mapped[str | None] = mapped_column(Text, default=None)
     keywords: Mapped[str] = mapped_column(String(256), default="")
     char_count: Mapped[int] = mapped_column(Integer, default=0)
-    # 仅供本地检索用的片段摘录（不对外分发）
+    # 正文全文：只在用户自己导入正版文件时存本地；不外传、不进仓库（data/ 已 gitignore）
+    content: Mapped[str | None] = mapped_column(Text, default=None)
+    # 前 300 字摘录，给列表/检索预览用
     excerpt: Mapped[str | None] = mapped_column(Text, default=None)
 
 
