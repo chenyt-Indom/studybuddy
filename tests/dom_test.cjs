@@ -276,6 +276,8 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   await waitFor(() => doc.querySelector('#tbEditions button.primary'), 12000);
   const hlBefore = Array.from(doc.querySelectorAll('#tbEditions button.primary'))
     .map(b => b.textContent.trim());
+  check('教材页有粘贴正文入口',
+        !!doc.querySelector('#tbxText') && !!doc.querySelector('#tbxGo'));
   check('教材页有课本阅读器容器', !!doc.querySelector('#tbReader'));
   check('章节行可点击打开正文',
         doc.querySelectorAll('#tbOutline .tb-sec').length > 0,

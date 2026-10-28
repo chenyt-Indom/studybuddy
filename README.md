@@ -4,7 +4,7 @@
 >   
 > 这个能力叫**专精化（Specialization）**——不是回答「问题」，而是回答「你问这个问题的这个人」。
 
-![状态](https://img.shields.io/badge/status-v0.1.14%20%E5%88%9D%E7%A8%BF-brightgreen)
+![状态](https://img.shields.io/badge/status-v0.1.15%20%E5%88%9D%E7%A8%BF-brightgreen)
 
 ![发布](https://img.shields.io/badge/release-v0.1.0--draft-orange)
 
@@ -18,7 +18,7 @@
 
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
-> **当前版本：v0.1.14 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
+> **当前版本：v0.1.15 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
 >   
 > 这是按方案落地的**第一版可运行骨架**：三条主线（专精化 / 遗忘曲线 / 跨科目）已跑通，
 >   
@@ -725,6 +725,22 @@ node tests\dom_test.cjs
 ---
 
 ## 十二、版本记录
+
+### v0.1.15 · 新增「粘贴正文导入」—— 绕开拿不到 API 的那段（2026-10-28）
+
+背景：用户订阅的教材在 IMA 里，但 Agent 侧的 `knowledge_search(ima)` 一直
+`HTTP 502` / `AUTH_FAILED`（连接器显示 connected，检索网关不认凭证），
+试了三轮（含重连一次）都不通。与其干等，不如把**用户手上已有的内容**接进来。
+
+**新增**：`POST /api/textbook/paste` + 教材页「粘贴正文导入」卡片
+- 从 IMA / 电子书 / 笔记里复制一段正文，粘进来 → 按「第一章 / 1.1」标题切节 → 存全文
+- 立刻具备：离线阅读、全文检索、讲解引用【课本原文】
+- 过短拦截（<80 字）、无文件也能建教材（`edition_code=paste`）
+
+这条路的价值不在"省事"，而在**不依赖任何外部凭证**：
+用户能看到的内容，就能变成可检索、可引用的课本。
+
+测试：后端 163/163、前端 58/58（新增 6 + 1 项）
 
 ### v0.1.14 · 教材正文离线可用：导入 → 阅读 → 检索 → 讲进模型（2026-10-28）
 

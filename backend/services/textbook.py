@@ -222,6 +222,49 @@ def import_file(
     }
 
 
+def import_pasted_text(db: Session, user_id: int, title: str, text: str,
+                       subject_key: str, stage: str = "senior",
+                       grade: str = "senior_1", volume: str = "",
+                       publisher: str = "手动粘贴") -> dict:
+    """粘贴正文导入：把从别处（IMA / 电子书 / 笔记）复制的**正文**切章节入库。
+
+    为什么单独做这条路：API 拿不到内容时，用户手上其实是有内容的（能看能复制），
+    卡住的只是"怎么送进来"。复制一段粘进来，30 秒就能变成可读、可检索的课本。
+    """
+    text = (text or "").strip()
+    if len(text) < 80:
+        return {"ok": False, "message": "内容太短（至少 80 字），粘贴完整一点"}
+
+    code = f"user_{user_id}_{uuid.uuid4().hex[:8]}"
+    tb = Textbook(
+        user_id=user_id, code=code, title=(title or "粘贴的教材")[:100],
+        subject_key=subject_key, stage=stage, grade=grade,
+        volume=volume or "粘贴导入", publisher=publisher,
+        bundled=False, file_path=None,
+        edition_code="paste", edition_name=publisher,
+        page_count=0, char_count=len(text),
+        parse_status="parsed", parse_note="由粘贴正文导入",
+    )
+    db.add(tb)
+    db.flush()
+
+    secs = split_structure(text)
+    for i, sec in enumerate(secs):
+        body = sec["text"]
+        kps = _guess_kps(db, subject_key, sec["section"], body)
+        db.add(TextbookSection(
+            textbook_id=tb.id,
+            chapter=sec["chapter"][:128], section=sec["section"][:128],
+            order_index=i, kp_codes=json.dumps(kps, ensure_ascii=False),
+            keywords="", char_count=len(body),
+            content=body or None, excerpt=body[:300] or None,
+        ))
+    db.flush()
+    return {"ok": True, "id": tb.id, "title": tb.title,
+            "sections": len(secs), "chars": len(text),
+            "message": f"已切出 {len(secs)} 节 / {len(text)} 字"}
+
+
 def import_outline_text(
     db: Session, user_id: int, raw: str, subject_key: str,
     stage: str = "senior", grade: str = "senior_1",

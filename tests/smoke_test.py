@@ -713,6 +713,27 @@ check("讲解 prompt 带上课本原文", "【课本原文】" in sp)
 check("prompt 要求对齐课本但不得照抄",
       "不要整段照抄" in sp and "课本怎么说的" in sp)
 
+print("28. 粘贴正文导入（绕开 API 拿内容的那条路）")
+_txt = (_pl.Path(__file__).resolve().parent / "fixtures" / "sample_textbook.txt").read_text(encoding="utf-8")
+ps = c.post("/api/textbook/paste", json={"title": "粘贴导入测试", "text": _txt,
+                                        "subject": "math", "stage": "senior",
+                                        "grade": "senior_1"}).json()
+check("粘贴正文能入库", ps.get("ok") is True, ps.get("message"))
+check("按标题切成多节", ps.get("sections", 0) >= 4, f"{ps.get('sections')} 节")
+if ps.get("ok"):
+    o2 = c.get(f"/api/textbook/{ps['id']}/outline").json()
+    s2 = [x for ch in o2.get("chapters") or [] for x in ch["sections"]]
+    check("粘贴的每一节都有正文", all(x.get("has_text") for x in s2),
+          f"{sum(1 for x in s2 if x.get('has_text'))}/{len(s2)}")
+    if s2:
+        d2 = c.get(f"/api/textbook/section/{s2[0]['id']}").json()
+        check("粘贴后能读正文", len(d2.get("content") or "") > 100,
+              f"{len(d2.get('content') or '')} 字")
+sr2 = c.get("/api/textbook/search", params={"q": "空集"}).json()
+check("粘贴的内容也能被检索", sr2.get("count", 0) >= 1)
+short = c.post("/api/textbook/paste", json={"title": "x", "text": "太短了"}, ).json()
+check("过短内容被拦下", short.get("ok") is False, short.get("message"))
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

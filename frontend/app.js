@@ -1879,6 +1879,22 @@ async function viewTextbook(root) {
       <button class="btn" id="tbPaste">导入目录</button>
       <div id="tbPasteOut"></div>
     </div>
+
+    <div class="card">
+      <h3>粘贴正文导入 <span class="tag">从 IMA / 电子书复制正文过来，最省事</span></h3>
+      <p class="hint" style="margin:0 0 10px">
+        直接把课本正文粘进来（保留「第一章 / 1.1」这类标题行，我会按标题切成节）。
+        粘完立刻离线可读、可检索，讲解也会引用原文。
+      </p>
+      <div class="field"><label>教材名称</label>
+        <input id="tbxTitle" type="text" placeholder="例如：人教A版 必修第一册（从IMA复制）" /></div>
+      <div style="height:10px"></div>
+      <textarea id="tbxText" style="min-height:160px"
+        placeholder="第一章 集合与常用逻辑用语&#10;1.1 集合的概念&#10;把一些确定的、彼此不同的对象看成一个整体……"></textarea>
+      <div style="height:14px"></div>
+      <button class="btn primary" id="tbxGo">切章节并入库</button>
+      <div id="tbxOut"></div>
+    </div>
   </div>
 
   <div class="card">
@@ -2106,6 +2122,30 @@ ${h(r.content || '（这一节没有正文，点上面的「补全正文」重�
   };
 
   // ---------- 上传 ----------
+  // 粘贴正文 → 切章节入库
+  $('#tbxGo').onclick = async () => {
+    const text = $('#tbxText').value.trim();
+    const title = $('#tbxTitle').value.trim() || '粘贴导入的教材';
+    if (text.length < 80) return toast('正文太短，至少 80 字', true);
+    const out = $('#tbxOut');
+    out.innerHTML = '<div class="empty">切章节中…</div>';
+    $('#tbxGo').disabled = true;
+    try {
+      const r = await api.post('/api/textbook/paste', {
+        title, text, subject: TB_STATE.subject, stage: TB_STATE.stage,
+        grade: $('#tbGrade').value,
+      });
+      if (!r.ok) { out.innerHTML = `<div class="empty">${h(r.message)}</div>`; return; }
+      out.innerHTML = `<div class="insight"><div class="t">已入库</div>
+        <div class="d">${h(r.message)} · 现在可以在下面「章节结构」里点开阅读</div></div>`;
+      $('#tbxText').value = '';
+      await loadEditions();     // 刷新版本列表
+      showOutline(r.id);
+      toast('已切成 ' + r.sections + ' 节');
+    } catch (e) { out.innerHTML = `<div class="empty">${h(e.message)}</div>`; }
+    finally { $('#tbxGo').disabled = false; }
+  };
+
   $('#tbUpload').onclick = async () => {
     const f = $('#tbFile').files[0];
     if (!f) return toast('先选一个文件', true);

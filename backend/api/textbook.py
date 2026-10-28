@@ -21,6 +21,7 @@ from ..services.textbook import (
     get_user_textbook,
     import_file,
     import_outline_text,
+    import_pasted_text,
     list_textbooks,
     outline,
     refill_contents,
@@ -108,6 +109,26 @@ def create_outline(body: OutlineIn, user: User = Depends(current_user),
         set_user_textbook(db, user.id, body.subject, res["code"])
         db.commit()
     return res
+
+
+class PasteIn(BaseModel):
+    title: str = ""
+    text: str = ""
+    subject: str = "math"
+    stage: str = "senior"
+    grade: str = "senior_1"
+    volume: str = ""
+
+
+@router.post("/paste")
+def paste_text(body: PasteIn, user: User = Depends(current_user),
+               db: Session = Depends(get_db)):
+    """粘贴正文导入：从 IMA / 电子书复制一段正文，切章节入库，离线可读可检索。"""
+    r = import_pasted_text(db, user.id, body.title, body.text, body.subject,
+                           body.stage, body.grade, body.volume)
+    if r.get("ok"):
+        db.commit()
+    return r
 
 
 @router.get("/section/{section_id}")
