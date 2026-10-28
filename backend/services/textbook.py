@@ -488,7 +488,7 @@ SUBJECT_CN = {
     "math": "数学", "physics": "物理", "chemistry": "化学",
     "biology": "生物", "chinese": "语文", "english": "英语",
 }
-STAGE_CN = {"primary": "小学", "junior": "初中", "senior": "高中", "college": "大学"}
+STAGE_CN = {"primary": "小学", "junior": "初中", "senior": "高中"}
 
 
 async def check_latest(db: Session, tb: Textbook) -> dict:

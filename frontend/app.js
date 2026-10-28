@@ -11,8 +11,7 @@ const GRADE_OPTIONS = {
   primary: [['primary_1', '一年级'], ['primary_2', '二年级'], ['primary_3', '三年级'],
             ['primary_4', '四年级'], ['primary_5', '五年级'], ['primary_6', '六年级']],
   junior: [['junior_1', '初一'], ['junior_2', '初二'], ['junior_3', '初三']],
-  senior: [['senior_1', '高一'], ['senior_2', '高二'], ['senior_3', '高三']],
-  college: [['college_1', '大一'], ['college_2', '大二'], ['college_3', '大三'], ['college_4', '大四']]
+  senior: [['senior_1', '高一'], ['senior_2', '高二'], ['senior_3', '高三']]
 };
 const ERROR_TYPES = {
   concept: '概念不清', calculation: '计算失误', careless: '粗心',
@@ -1052,7 +1051,7 @@ async function viewProfile(root) {
         <div class="grid g2">
           <div class="field"><label>学段</label><select id="pStage">
             <option value="primary">小学</option><option value="junior">初中</option>
-            <option value="senior">高中</option><option value="college">大学</option>
+            <option value="senior">高中</option>
           </select></div>
           <div class="field"><label>年级</label><select id="pGrade"></select></div>
           <div class="field"><label>目标专业/方向</label><input id="pMajor" type="text" placeholder="如：人工智能技术应用" /></div>
@@ -1613,8 +1612,9 @@ async function viewKp(root) {
       <div class="desc">各年级各科的知识点 · 每个都带「一句话要点 / 常见易错 / 记忆锚点」</div></div>
     <div class="row" style="gap:8px">
       <select id="kpStage" style="width:auto">
-        <option value="senior">高中</option>
+        <option value="primary">小学</option>
         <option value="junior">初中</option>
+        <option value="senior">高中</option>
       </select>
       <select id="kpGrade" style="width:auto"></select>
       <select id="kpSubj" style="width:auto">

@@ -212,6 +212,8 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   kpLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const kpOk = await waitFor(() => doc.querySelectorAll('#kpList .kp-row').length > 5, 12000);
   check('知识点列表已渲染', kpOk, `${doc.querySelectorAll('#kpList .kp-row').length} 行`);
+  check('知识点页可选小学学段',
+        !!doc.querySelector('#kpStage option[value="primary"]'));
   check('知识点行带年级徽章',
         !!doc.querySelector('#kpList .kp-nm .pill'));
   check('有统计卡', doc.querySelectorAll('#kpStats .card').length === 4);
@@ -300,6 +302,17 @@ async function waitFor(fn, timeout = 8000, step = 120) {
   } else {
     check(`找到${targetName}按钮`, false);
   }
+
+  // 学习档案：学段只剩 小学/初中/高中
+  Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'profile')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await waitFor(() => doc.querySelector('#pStage'), 12000);
+  const stageOpts = doc.querySelector('#pStage') ? doc.querySelector('#pStage').options : [];
+  const stageVals = Array.from(stageOpts).map(o => o.value);
+  check('学段只有小学/初中/高中', stageVals.length === 3 &&
+        stageVals.includes('primary') && stageVals.includes('junior') &&
+        stageVals.includes('senior'), stageVals.join('/'));
+  check('大学学段已移除', !stageVals.includes('college'));
 
   // 设置页：教材知识库（IMA）卡片
   Array.from(doc.querySelectorAll('.side nav a')).find(a => a.dataset.v === 'settings')

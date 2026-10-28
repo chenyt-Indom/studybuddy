@@ -9,9 +9,18 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import DB_URL
 
+# 连接池为什么要调大：
+#   页面一切换就会并发打好几个接口（看板 7 个、档案 5 个…），
+#   同时可能还有 SSE 流在跑、后台 _post_process 任务在写库。
+#   默认 QueuePool 只有 5+10，实测会打出
+#   "QueuePool limit of size 5 overflow 10 reached" → 接口 500。
+#   SQLite 的连接就是一个文件句柄，放宽到 10+20 很便宜。
 engine = create_engine(
     DB_URL,
     connect_args={"check_same_thread": False},
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=15,
     future=True,
 )
 
@@ -109,6 +118,28 @@ def _ensure_columns() -> None:
         conn.commit()
 
 
+def _migrate_drop_college() -> None:
+    """v0.1.13 起产品只做 小学→高中，大学学段下线。
+
+    老库里的 stage='college' / grade='college_*' 统一归到高三，
+    否则画像还在"大学"，知识点页却选不到对应学段，用户会看到空白。
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        try:
+            n1 = conn.execute(text(
+                "UPDATE user_profiles SET stage='senior' WHERE stage='college'"
+            )).rowcount
+            n2 = conn.execute(text(
+                "UPDATE user_profiles SET grade='senior_3' WHERE grade LIKE 'college%'"
+            )).rowcount
+            if n1 or n2:
+                print(f"[migrate] 大学学段已下线，{n1} 条 stage、{n2} 条 grade 归入高三")
+        except Exception:
+            pass        # 表还不存在等情况，忽略即可
+
+
 def init_db() -> None:
     from . import models  # noqa: F401  注册所有表
     from .seeds import load_seeds
@@ -118,3 +149,4 @@ def init_db() -> None:
     _ensure_columns()
     load_seeds()
     load_textbook_seeds()
+    _migrate_drop_college()

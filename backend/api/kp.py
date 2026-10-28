@@ -40,7 +40,6 @@ GRADE_CN = {
     "primary_4": "四年级", "primary_5": "五年级", "primary_6": "六年级",
     "junior_1": "初一", "junior_2": "初二", "junior_3": "初三",
     "senior_1": "高一", "senior_2": "高二", "senior_3": "高三",
-    "college_1": "大一", "college_2": "大二", "college_3": "大三", "college_4": "大四",
     "all": "贯穿",
 }
 RELATION_CN = {

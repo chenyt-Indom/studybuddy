@@ -591,6 +591,21 @@ check("仅本年级只返回该年级", g1["stats"]["total_shown"] > 0
               for m in s2["modules"] for i in m["items"]),
       f"{g1['stats']['total_shown']} 条")
 check("高一视图里没有导数/圆锥曲线", "导数" not in names1 and "圆锥曲线" not in names1)
+# 学段覆盖：小学 → 高中都要有；大学已下线
+pri = c.get("/api/kp/overview", params={"stage": "primary"}).json()
+check("小学学段有知识点", pri["stats"]["total_all"] >= 30, f"{pri['stats']['total_all']} 个")
+check("小学含语文与英语",
+      {"语文", "英语"} <= {x["cn"] for x in pri["subjects"]},
+      "/".join(x["cn"] for x in pri["subjects"]))
+p3 = c.get("/api/kp/overview", params={"stage": "primary", "mode": "current",
+                                       "grade": "primary_3"}).json()
+n3 = [i["name"] for x in p3["subjects"] for m in x["modules"] for i in m["items"]]
+check("小学三年级视图只含三年级", p3["stats"]["total_shown"] > 0
+      and all(i["grade"] == "primary_3" for x in p3["subjects"]
+              for m in x["modules"] for i in m["items"]), f"{p3['stats']['total_shown']} 条")
+col = c.get("/api/kp/overview", params={"stage": "college"}).json()
+check("大学学段已下线（返回空）", col["stats"]["total_all"] == 0)
+
 check("高二视图里才出现导数",
       any(i["name"] == "导数" for s2 in c.get("/api/kp/overview", params={
           "stage": "senior", "mode": "current", "grade": "senior_2"}).json()["subjects"]

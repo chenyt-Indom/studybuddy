@@ -21,7 +21,6 @@ GRADE_CN = {
     "primary_4": "小学四年级", "primary_5": "小学五年级", "primary_6": "小学六年级",
     "junior_1": "初一", "junior_2": "初二", "junior_3": "初三",
     "senior_1": "高一", "senior_2": "高二", "senior_3": "高三",
-    "college_1": "大一", "college_2": "大二", "college_3": "大三", "college_4": "大四",
 }
 
 
@@ -42,7 +41,10 @@ def build_tutor_prompt(ctx: dict, subject_key: str) -> str:
     )
 
     # ① 年级约束：先框死范围，避免拿高年级工具解低年级的题
-    grade_cn = ctx.get("grade_cn") or GRADE_CN.get(ctx.get("grade") or "", "")
+    _grade = ctx.get("grade") or ""
+    grade_cn = ctx.get("grade_cn") or GRADE_CN.get(_grade, "")
+    if not grade_cn and _grade.startswith("college"):
+        grade_cn = "高三（旧数据里的大学学段已归入高中）"
     if grade_cn:
         parts.append(
             f"【年级约束】该生读{grade_cn}。讲解**优先用{grade_cn}及以前学过的概念、符号和方法**，"

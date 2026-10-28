@@ -114,11 +114,11 @@ ALIASES: dict[str, list[str]] = {
 }
 
 # 年级顺序（小学 → 大学）。"all" 单独处理，永远可见。
+# 只覆盖 小学 → 高中。大学学段已从产品里移除（见 README v0.1.13）
 _GRADE_SEQ = [
     "primary_1", "primary_2", "primary_3", "primary_4", "primary_5", "primary_6",
     "junior_1", "junior_2", "junior_3",
     "senior_1", "senior_2", "senior_3",
-    "college_1", "college_2", "college_3", "college_4",
 ]
 _RANK = {g: i for i, g in enumerate(_GRADE_SEQ)}
 
@@ -127,7 +127,11 @@ def grade_rank(grade: str | None) -> int | None:
     """年级 → 序号；"all"/空 → None（表示贯穿型，不参与比较）。"""
     if not grade or grade == "all":
         return None
-    return _RANK.get(grade)
+    r = _RANK.get(grade)
+    if r is None and (grade or "").startswith("college"):
+        # 老数据里可能还留着 college_*，统一当高三看，别让它变成"永远可见"
+        return _RANK["senior_3"]
+    return r
 
 
 def is_visible(kp: KnowledgePoint, max_rank: int | None) -> bool:

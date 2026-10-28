@@ -48,7 +48,7 @@ class UserProfile(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
 
     # ① 学业基础
-    stage: Mapped[str] = mapped_column(String(16), default="senior")  # primary/junior/senior/college
+    stage: Mapped[str] = mapped_column(String(16), default="senior")  # primary/junior/senior
     grade: Mapped[str] = mapped_column(String(16), default="senior_1")
     target_major: Mapped[str | None] = mapped_column(String(128), default=None)
     electives: Mapped[str | None] = mapped_column(String(64), default=None)  # JSON 数组
