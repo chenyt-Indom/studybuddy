@@ -72,6 +72,21 @@ def set_search(body: SearchIn, user: User = Depends(current_user)):
     return {"ok": True, **_payload()}
 
 
+@router.get("/ocr")
+def ocr_status():
+    """扫描版 PDF / 拍照课本能不能识别（依赖装没装）。"""
+    from ..services import ocr
+
+    ok = ocr.available()
+    return {
+        "ok": True,
+        "available": ok,
+        "note": ("已安装 RapidOCR，扫描版 PDF 和课本照片可以直接导入"
+                 if ok else
+                 "未安装 OCR 依赖：pip install -r requirements-ocr.txt"),
+    }
+
+
 @router.get("/config")
 def read_config(user: User = Depends(current_user)):
     return _payload()

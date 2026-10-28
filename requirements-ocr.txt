@@ -1,0 +1,6 @@
+# 可选：扫描版 PDF / 拍照课本的 OCR（约 100MB）
+#   pip install -r requirements-ocr.txt
+# 不装也能跑，只是扫描版 PDF 会提示"没有文字层"
+rapidocr-onnxruntime>=1.2
+pymupdf>=1.24
+pillow>=10.0

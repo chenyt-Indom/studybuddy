@@ -71,10 +71,30 @@ def _chapter_key(name: str) -> str:
     return k or "（未分章）"
 
 
-def _extract_text(path: Path) -> tuple[str, int, str]:
+# 扫描版 PDF 走 OCR 的页数上限。
+#   一次请求里 OCR 一页约 1.5~2 秒，20 页 ≈ 40 秒 —— 再往上就该用
+#   scripts/ocr_pdf.py 离线整本转换了，否则前端会等到超时。
+OCR_INLINE_MAX_PAGES = 20
+
+
+def _extract_text(path: Path, allow_ocr: bool = True) -> tuple[str, int, str]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        return _extract_pdf(path)
+        text, pages, err = _extract_pdf(path)
+        # 文字层几乎抽不出东西 → 多半是扫描版/拍照转的 PDF，尝试 OCR 兜底
+        if allow_ocr and len(text.strip()) < 200 and pages > 0:
+            from . import ocr as ocr_svc
+            if ocr_svc.available():
+                if pages <= OCR_INLINE_MAX_PAGES:
+                    ot, done, oerr = ocr_svc.ocr_pdf(path)
+                    if ot.strip():
+                        return _normalize(ot), pages, f"扫描版，已 OCR 前 {done} 页"
+                    return "", pages, f"扫描版且 OCR 失败：{oerr}"
+                return "", pages, (
+                    f"扫描版 PDF 共 {pages} 页，超出一键导入上限（{OCR_INLINE_MAX_PAGES} 页）。"
+                    "请用 scripts/ocr_pdf.py 先转成 txt 再导入（命令见 README）"
+                )
+        return text, pages, err
     if suffix in (".txt", ".md"):
         try:
             raw = path.read_text(encoding="utf-8", errors="ignore")[:MAX_TEXT_CHARS]

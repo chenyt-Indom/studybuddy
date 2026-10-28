@@ -734,6 +734,12 @@ check("粘贴的内容也能被检索", sr2.get("count", 0) >= 1)
 short = c.post("/api/textbook/paste", json={"title": "x", "text": "太短了"}, ).json()
 check("过短内容被拦下", short.get("ok") is False, short.get("message"))
 
+print("29. OCR 状态（扫描版 PDF / 拍照课本）")
+oc = c.get("/api/system/ocr").json()
+check("OCR 状态接口可用", oc.get("ok") is True, oc.get("note", ""))
+check("OCR 依赖已就绪", oc.get("available") is True,
+      "可用" if oc.get("available") else oc.get("note", ""))
+
 print("=" * 64)
 print(f"通过 {ok_count} 项，失败 {len(fail)} 项")
 if fail:

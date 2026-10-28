@@ -1863,6 +1863,10 @@ async function viewTextbook(root) {
       </div>
       <div style="height:14px"></div>
       <button class="btn primary" id="tbUpload">上传并解析</button>
+      <p class="hint" style="margin:8px 0 0">
+        扫描版 PDF（拍照转的、没有文字层）会自动走 OCR 识别，单次上限 20 页；
+        整本书请用 <span class="mono">scripts/ocr_pdf.py</span> 先转 txt 再导入。
+      </p>
       <div id="tbUpOut"></div>
     </div>
 

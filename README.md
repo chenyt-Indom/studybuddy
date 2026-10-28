@@ -4,7 +4,7 @@
 >   
 > 这个能力叫**专精化（Specialization）**——不是回答「问题」，而是回答「你问这个问题的这个人」。
 
-![状态](https://img.shields.io/badge/status-v0.1.15%20%E5%88%9D%E7%A8%BF-brightgreen)
+![状态](https://img.shields.io/badge/status-v0.1.16%20%E5%88%9D%E7%A8%BF-brightgreen)
 
 ![发布](https://img.shields.io/badge/release-v0.1.0--draft-orange)
 
@@ -18,7 +18,7 @@
 
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
-> **当前版本：v0.1.15 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
+> **当前版本：v0.1.16 初稿**（GitHub Release 仍为 `v0.1.0-draft`）
 >   
 > 这是按方案落地的**第一版可运行骨架**：三条主线（专精化 / 遗忘曲线 / 跨科目）已跑通，
 >   
@@ -725,6 +725,43 @@ node tests\dom_test.cjs
 ---
 
 ## 十二、版本记录
+
+### v0.1.16 · 装上 OCR：扫描版 PDF / 拍照课本也能入库（2026-10-28）
+
+纸质书和「拍照转的 PDF」以前导进来是 **0 字**（没有文字层）。这次补上 OCR。
+
+**选型：RapidOCR 而不是 PaddleOCR**
+
+| | RapidOCR | PaddleOCR |
+|---|---|---|
+| 体积 | 约 100MB（含模型） | 300MB+ 依赖，还要编译环境 |
+| 依赖 | 纯 onnxruntime，装完即用 | paddlepaddle，Windows 上容易踩坑 |
+| 印刷体中文 | 够用 | 也很好 |
+
+课本是印刷体，没必要为它背 Paddle 那一套。
+
+**三条用法**
+
+| 场景 | 怎么做 |
+|---|---|
+| 几页讲义 / 拍照作业 | 直接上传，`_extract_text` 发现抽不出字就**自动 OCR**（单次 ≤20 页，约 8 秒/2 页） |
+| 整本教材（几十上百页） | `python scripts/ocr_pdf.py "D:/书/数学.pdf" --to-inbox` → 再 `import_inbox.py`（一次请求跑 200 页必然超时，必须离线转） |
+| 单张照片 | `ocr.ocr_image(path)` |
+
+**实测（不是"应该能用"）**
+- 用 PIL + 微软雅黑造一页中文课本 → OCR **关键字全部命中**（集合/元素/列举法/1.1）
+- 造一个 2 页**纯图片 PDF**（pypdf 抽出 0 字）→ 上传后 8.5 秒 OCR 出 2 节、正文完整可读
+
+**踩坑**
+- RapidOCR 的返回是 `[[box, text, score], ...]`，而 **score 有时是字符串**（`'0.93'`），
+  直接 `score > 0.4` 抛 `TypeError: '>' not supported between str and float`
+  → 统一 `float()` 转换后再比（`_pick_lines` 已处理）
+- 公式识别不出来（会漏识/乱码），公式密集的页 OCR 价值有限 —— 这个先认
+
+依赖单独放 `requirements-ocr.txt`（可选）：不装也能跑，只是扫描版会提示"没有文字层"。
+状态可查：`GET /api/system/ocr`。
+
+测试：后端 165/165、前端 58/58、OCR 专项 9/9
 
 ### v0.1.15 · 新增「粘贴正文导入」—— 绕开拿不到 API 的那段（2026-10-28）
 
